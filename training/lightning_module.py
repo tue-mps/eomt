@@ -388,9 +388,11 @@ class LightningModule(lightning.LightningModule):
 
             block_postfix = self.block_postfix(i)
             if log_per_class:
-                for class_idx, iou in enumerate(iou_per_class):
+                original_class_ids_ordered = list(metric.things) + list(metric.stuffs)
+                for class_tensor_idx, iou in enumerate(iou_per_class):
+                    actual_class_id = original_class_ids_ordered[class_tensor_idx]
                     self.log(
-                        f"metrics/{log_prefix}_iou_class_{class_idx}{block_postfix}",
+                        f"metrics/{log_prefix}_iou_class_{actual_class_id}{block_postfix}",
                         iou,
                     )
 
@@ -440,18 +442,20 @@ class LightningModule(lightning.LightningModule):
 
             block_postfix = self.block_postfix(i)
             if log_per_class:
-                for class_idx in range(len(pq)):
+                original_class_ids_ordered = list(metric.things) + list(metric.stuffs)
+                for class_tensor_idx in range(len(pq)):
+                    actual_class_id = original_class_ids_ordered[class_tensor_idx]
                     self.log(
-                        f"metrics/{log_prefix}_pq_class_{class_idx}{block_postfix}",
-                        pq[class_idx],
+                        f"metrics/{log_prefix}_pq_class_{actual_class_id}{block_postfix}",
+                        pq[class_tensor_idx],
                     )
                     self.log(
-                        f"metrics/{log_prefix}_sq_class_{class_idx}{block_postfix}",
-                        sq[class_idx],
+                        f"metrics/{log_prefix}_sq_class_{actual_class_id}{block_postfix}",
+                        sq[class_tensor_idx],
                     )
                     self.log(
-                        f"metrics/{log_prefix}_rq_class_{class_idx}{block_postfix}",
-                        rq[class_idx],
+                        f"metrics/{log_prefix}_rq_class_{actual_class_id}{block_postfix}",
+                        rq[class_tensor_idx],
                     )
 
             self.log(
