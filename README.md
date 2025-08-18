@@ -16,6 +16,11 @@ Leveraging large-scale pre-trained ViTs, EoMT achieves accuracy similar to state
 
 Turns out, *your ViT is secretly an image segmentation model*. EoMT shows that architectural complexity isn't necessary. For segmentation, a plain Transformer is all you need.
 
+## News
+
+- [2025-08-15]: 🚀 **EoMT is supported in [LightlyTrain](https://github.com/lightly-ai/lightly-train)!**  
+  Pre-train ViT backbones and fine-tune with EoMT in just [a few lines of code](https://docs.lightly.ai/train/stable/semantic_segmentation.html). LightlyTrain is compatible with DINOv3 models. 🚀
+
 ## 🤗 Transformers Quick Usage Example
 
 EoMT is also available on [Hugging Face Transformers](https://huggingface.co/docs/transformers/main/model_doc/eomt). To install:
