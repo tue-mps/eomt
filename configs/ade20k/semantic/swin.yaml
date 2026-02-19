@@ -1,0 +1,36 @@
+trainer:
+  max_epochs: 31
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "ade20k_semantic_224_swin_small"
+model:
+  class_path: training.mask_classification_semantic.MaskClassificationSemantic
+  init_args:
+    attn_mask_annealing_enabled: False
+    attn_mask_annealing_start_steps: [6520, 13040, 19560, 26080]
+    attn_mask_annealing_end_steps: [13040, 19560, 26080, 32600]
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 100
+        num_blocks: 2
+        self_a: False
+        encoder:
+          class_path: models.swin.Swin
+          init_args:
+            backbone_name: "swin_small_window7"
+            ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/swin_small_patch4_window7.pt"
+            swin_size: "S"
+data:
+  class_path: datasets.ade20k_semantic.ADE20KSemantic
+  init_args:
+    img_size: [224, 224]
+
+    # sbatch run_script.sh main.py fit -c configs/ade20k/semantic/eomt_large_512_swin.yaml --trainer.devices 2 
+    # --data.batch_size 8 --data.path /ds/images/ADE20k1 --compile_disabled 
+    # --model.init_args.network.init_args.encoder.init_args.ckpt_path /netscratch/nauen/trained_models/imagenet21k/swin_tiny_patch4_window7.pt 
+    # --trainer.logger.init_args.name ade20k_semantic_448_tinywin --model.init_args.network.init_args.encoder.init_args.backbone_name swin_tiny_window7 
+    # --data.init_args.img_size "[448,448]" --model.init_args.network.init_args.encoder.init_args.swin_size Ti

@@ -9,27 +9,26 @@ from typing import Optional
 import timm
 import torch
 import os
+from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 import torch.nn as nn
 
 from models.backbones.utils import vit_sizes
 
-class ViT(nn.Module):
+class Hydra(nn.Module):
     def __init__(
         self,
         img_size: tuple[int, int],
-        patch_size=16,
-        backbone_name="vit_large_patch16_384",
+        backbone_name="hydra_vit_small_patch16",
         multiplier: int = 1,
         ls_init = 1e-6,
-        vit_size: str = "B",
+        vit_size: str = "S",
         ckpt_path: Optional[str] = None,
     ):
         super().__init__()
         self.backbone = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
-            img_size=img_size,
-            patch_size=patch_size,
+            img_size=img_size[0],
             no_embed_class = True,
             init_values=ls_init,
             num_classes=0
@@ -41,11 +40,6 @@ class ViT(nn.Module):
             state_dict = None
             if 'model_state' in checkpoint:
                 state_dict = {k[7:] if k.startswith('module.') else k: v for k, v in checkpoint['model_state'].items()}
-                state_dict['pos_embed'] = resize_pos_embed(
-                state_dict['pos_embed'],
-                self.backbone.pos_embed)
-            elif 'teacher' in checkpoint:
-                state_dict = {k[9:] if k.startswith('backbone.') else k: v for k, v in checkpoint['teacher'].items()}
                 state_dict['pos_embed'] = resize_pos_embed(
                 state_dict['pos_embed'],
                 self.backbone.pos_embed)
@@ -65,11 +59,10 @@ class ViT(nn.Module):
         self.norm = self.backbone.norm
         self.attn_multiplier = multiplier
 
-        pixel_mean = torch.tensor(self.backbone.default_cfg["mean"]).reshape(
+        pixel_mean = torch.tensor(IMAGENET_DEFAULT_MEAN).reshape(
             1, -1, 1, 1
         )
-        pixel_std = torch.tensor(self.backbone.default_cfg["std"]).reshape(1, -1, 1, 1)
-
+        pixel_std = torch.tensor(IMAGENET_DEFAULT_STD).reshape(1, -1, 1, 1)
         self.register_buffer("pixel_mean", pixel_mean)
         self.register_buffer("pixel_std", pixel_std)
 
@@ -80,36 +73,14 @@ class ViT(nn.Module):
         x = self.backbone.norm_pre(x)
         return x
     
-    def run_block(self, block, eomt_obj, x: torch.Tensor, q, i):   
-        if (
-                i >= len(self.blocks) - eomt_obj.num_blocks
-            ):
-            xq = torch.cat(
-                    (q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)
-            pre_attn = block.norm1(xq)
-            x, q = pre_attn[:, eomt_obj.num_q:, :], pre_attn[:, : eomt_obj.num_q, :]
-            
-            mask_logits, class_logits = eomt_obj._predict(x,q)
-            eomt_obj.mask_logits_per_layer.append(mask_logits)
-            eomt_obj.class_logits_per_layer.append(class_logits)
-
-            after_eomt = torch.cat((q, x), dim=1)
-            #cross-attention with EoMT attention module
-            new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
-            xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
-            x, q = xq[:, eomt_obj.num_q :, :], xq[:, : eomt_obj.num_q, :]
-            x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
-            x = x + block.drop_path2(block.ls2(block.mlp(block.norm2(x))))
-            q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
-            
-        else:
-            x = block(x)
-
-        return x, q
+    def q_mlp(self, block, q: torch.Tensor):
+        q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
+        return q
     
-    def post_blocks(self, x: torch.Tensor,q, eomt_obj):
-        x = self.norm(x)
-        return x,q
+    def run_block(self, block, x: torch.Tensor, _):
+        x = block(x)
+        return x
+    
 
 
 def resize_pos_embed(posemb, posemb_new):

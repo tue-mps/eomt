@@ -1,0 +1,55 @@
+trainer:
+  max_epochs: 31
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "ade20k_semantic_512_ViT-B_21k"
+model:
+  class_path: training.mask_classification_semantic.MaskClassificationSemantic
+  init_args:
+    attn_mask_annealing_enabled: False
+    attn_mask_annealing_start_steps: [6520, 13040, 19560, 26080]
+    attn_mask_annealing_end_steps: [13040, 19560, 26080, 32600]
+    lr: 1e-4
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 100
+        num_blocks: 2
+        self_a: False
+        encoder:
+          class_path: models.vit.ViT
+          init_args:
+            backbone_name: "vit_base_patch16_224"
+            patch_size: 16
+            ls_init: 1e-6
+            ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/ViT-B.pt"
+data:
+  class_path: datasets.ade20k_semantic.ADE20KSemantic
+  init_args:
+    img_size: [512, 512]
+
+# imagenet
+  # CoaT-Ti_IN21k_to_IN1k.pt          NextViT-S_IN21k_to_IN1k.pt       ViT-B_final_v3.pt
+# CvT-13_IN21k_to_IN1k.pt           Nystrom32_IN21k_to_IN1k.pt       ViT-B_in21k_to_in1k.pt
+# EfficientMod-S_IN21k_to_IN1k.pt   PolySA-S_IN21k_to_IN1k.pt        ViT-L+ForAug_v1_final.pt
+# EfficientViT-B2_IN21k_to_IN1k.pt  ResT-S_IN21k_to_IN1k.pt          ViT-L+ForAug_v2_final.pt
+# FocalNet-S_IN21k_to_IN1k.pt       SwiftFormer-S_IN21k_to_IN1k.pt   ViT-L+ForAug_v3_final.pt
+# FocalNet-Ti_IN21k_to_IN1k.pt      SwinV2-Ti_IN21k_to_IN1k.pt       ViT-L_v1_final.pt
+# HiViT-S_IN21k.pt                  SwitchViT_8_IN21k_to_IN1k.pt     ViT-L_v2_final.pt
+# HydraViT-S_IN21k_to_IN1k.pt       Synthesizer_FR_IN21k_to_IN1k.pt  ViT-L_v3_final.pt
+# Linformer_IN21k_to_IN1k.pt        ViT-B_final_v1.pt                WaveViT-S_IN21k_to_IN1k.pt
+# Mixer_IN21k_to_IN1k.pt            ViT-B_final_v2.pt
+
+#imagenet21k
+# CoaT-Ti_IN21k.pt          HiViT-S_IN21k.pt     PolySA-S_IN21k.pt             SwitchViT_8_IN21k.pt
+# CvT-13_IN21k.pt           HydraViT-S_IN21k.pt  ResT-S_IN21k.pt               Synthesizer_FR_IN21k.pt
+# EfficientMod-S_IN21k.pt   Linformer_IN21k.pt   SwiftFormer-S_IN21k.pt        ViT-B.pt
+# EfficientViT-B2_IN21k.pt  Mixer_IN21k.pt       swin_small_patch4_window7.pt  ViT-S_IN21k.pt
+# FocalNet-S_IN21k.pt       NextViT-S_IN21k.pt   swin_tiny_patch4_window7.pt   WaveViT-S_IN21k.pt
+# FocalNet-Ti_IN21k.pt      Nystrom32_IN21k.pt   SwinV2-Ti_IN21k.pt
+
+#dino
+# vit_small.pt       swin_wide_small_w7_p4.pth   vit_base.pt

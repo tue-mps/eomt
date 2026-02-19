@@ -15,8 +15,6 @@ import torch.utils.checkpoint as checkpoint
 from timm.models import register_model
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-# from resizing_interface import ResizingInterface
-
 try:
     import os
     import sys

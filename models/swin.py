@@ -7,7 +7,7 @@ import timm
 import torch
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 import torch.nn as nn
-from models.backbones import swin
+from models.backbones.swin import SwinTransformer,swin_sizes
 
 
 class Swin(nn.Module):
@@ -20,7 +20,7 @@ class Swin(nn.Module):
         swin_size: str = "Ti"
     ):
         super().__init__()
-        self.backbone = timm.create_model(
+        self.backbone: SwinTransformer = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
             img_size=img_size,
@@ -28,7 +28,7 @@ class Swin(nn.Module):
         )
         self.backbone.set_image_res(img_size)
         self.backbone = load_swin_ckpt_ignore_attn_mask(self.backbone, ckpt_path)
-        sizes = swin.swin_sizes[swin_size]
+        sizes = swin_sizes[swin_size]
         self.num_heads = sizes['num_heads']
         self.embed_dim = self.backbone.embed_dim * 2**(len(self.num_heads)-1)
         self.patch_size = self.backbone.patch_embed.patch_size

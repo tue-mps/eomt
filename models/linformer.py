@@ -12,7 +12,8 @@ import math
 import os
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 import torch.nn as nn
-import models.backbones.linformer as linformer
+from models.backbones.utils import vit_sizes
+
 
 class Linformer(nn.Module):
     def __init__(
@@ -79,7 +80,7 @@ class Linformer(nn.Module):
                 
          
         self.embed_dim = self.backbone.embed_dim
-        sizes = linformer.vit_sizes[vit_size]
+        sizes = vit_sizes[vit_size]
         self.num_heads = [sizes['num_heads']]
         self.depths = [sizes['depth']]
         self.patch_size = self.backbone.patch_embed.patch_size

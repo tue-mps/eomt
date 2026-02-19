@@ -42,8 +42,13 @@ rm -rf annotations_instance
 | Architecture | Versions                                                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | Linformer    | linformer_vit_tiny_patch16, linformer_vit_small_patch16, linformer_vit_base_patch16, linformer_vit_large_patch16  |
-| ViT          | ViT-{Ti,S,B,L}/<patch_size>                                                                                                  |
-| Swin         | swin_tiny_patch4_window7, swin_small_patch4_window7, swin_base_patch4_window7, swin_large_patch4_window7          |
+| Hydra        | hydra_vit_tiny_patch16, hydra_vit_small_patch16, hydra_vit_base_patch16, hydra_vit_large_patch16                 |
+| Switch       | switch_8_vit_tiny_patch16, switch_8_vit_small_patch16, switch_8_vit_base_patch16, switch_8_vit_large_patch16    |
+| Swin         | swin_tiny_window7, swin_wide_tiny_window7, swin_small_window7, swin_wide_small_window7, swin_base_window7, swin_wide_base_window7, swin_large_window7 |
+| Synthesizer (FR) | synthesizer_fr_vit_tiny_patch16, synthesizer_fr_vit_small_patch16, synthesizer_fr_vit_base_patch16, synthesizer_fr_vit_large_patch16 |
+| NextViT      | nextvit_small_cus, nextvit_base_cus, nextvit_large_cus                                                             |
+| ConvViT      | cvt_13, cvt_21, cvt_w24                                                                                            |
+| EfficientViT | efficientvit_backbone_b0, efficientvit_backbone_b1, efficientvit_backbone_b2, efficientvit_backbone_b3          |
 ## Usage
 
 ### Training

@@ -95,16 +95,15 @@ class EoMT(nn.Module):
             embed_dim = embed_dim * self.encoder.attn_multiplier
         return attn_list
     
-    def _predict(self, x: torch.Tensor):
+    def _predict(self, x: torch.Tensor, q):
         
-        q = x[:, : self.num_q, :]
-
         class_logits = self.class_head(q)
-
-        x = x[:, self.num_q + self.encoder.num_prefix_tokens :, :]
-        x = x.transpose(1, 2).reshape(
-            x.shape[0], -1, *self.encoder.grid_size
-        )
+        
+        if len(x.shape) < 4:
+            x = x[:, self.encoder.num_prefix_tokens :, :]
+            x = x.transpose(1, 2).reshape(
+                x.shape[0], -1, *self.encoder.grid_size
+            )
         mask_features = self.mask_head(q)  # (B, Q, C)
         upscaled = self.upscale(x)  # (B, C, H, W)
 
@@ -121,51 +120,18 @@ class EoMT(nn.Module):
         x = (x - self.encoder.pixel_mean) / self.encoder.pixel_std
 
         x = self.encoder.pre_block(x)
-        orig_x_dims = len(x.shape)
-        mask_logits_per_layer, class_logits_per_layer = [], []
+        self.mask_logits_per_layer, self.class_logits_per_layer = [], []
         q = None
-
         for i, block in enumerate(self.encoder.blocks):
-            if i == len(self.encoder.blocks) - self.num_blocks:
-               
-                if len(x.shape) > 3:
-                    x = x.flatten(1,2)
-                x = torch.cat(
-                    (self.q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1
-                )                
-            if (
-                i >= len(self.encoder.blocks) - self.num_blocks
-            ):
-                mask_logits, class_logits = self._predict(self.encoder.norm(x))
-                mask_logits_per_layer.append(mask_logits)
-                class_logits_per_layer.append(class_logits)
-             
-                # Cross attention between queries and embeddings
-                new_x = self.attn[i - len(self.encoder.blocks)](self.encoder.norm(x))
-                x = x + self.dp(self.ls_list[i - len(self.encoder.blocks)](new_x))
-                # Queries dislodged from embeddings
-                q = x[:, : self.num_q, :]
-                x = x[:, self.num_q :, :]
-               
-                q = self.encoder.q_mlp(block,q)
-            # encoder blocks always process embeddings without queries
-            if len(x.shape) != orig_x_dims:
-                x = x.reshape(x.shape[0], self.encoder.grid_size[0], self.encoder.grid_size[1], -1).transpose(1,2)
-            x = self.encoder.run_block(block,x,i)
+            x, q = self.encoder.run_block(block, self, x, self.q, i)
+        
+        x,q = self.encoder.post_blocks(x,q,self)
             
-            # queries re-added for next iter
-            if q is not None:
-                if len(x.shape) > 3:
-                    x = x.flatten(1,2)
-                x = torch.cat(
-                        (q, x), dim=1
-                    )
-            
-        mask_logits, class_logits = self._predict(self.encoder.norm(x))
-        mask_logits_per_layer.append(mask_logits)
-        class_logits_per_layer.append(class_logits)
+        mask_logits, class_logits = self._predict(x,q=q)
+        self.mask_logits_per_layer.append(mask_logits)
+        self.class_logits_per_layer.append(class_logits)
 
         return (
-            mask_logits_per_layer,
-            class_logits_per_layer,
+            self.mask_logits_per_layer,
+            self.class_logits_per_layer,
         )
