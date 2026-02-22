@@ -28,26 +28,27 @@ class Hydra(nn.Module):
         self.backbone = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
-            img_size=img_size[0],
-            no_embed_class = True,
+            img_size=img_size,
+            no_embed_class=True,
             init_values=ls_init,
             num_classes=0
         )
         if ckpt_path is not None and os.path.isfile(ckpt_path):
             print("checkpoint found at {}".format(ckpt_path))
-            checkpoint = torch.load(ckpt_path,weights_only=False)
+            checkpoint = torch.load(ckpt_path, weights_only=False)
             
             state_dict = None
             if 'model_state' in checkpoint:
                 state_dict = {k[7:] if k.startswith('module.') else k: v for k, v in checkpoint['model_state'].items()}
                 state_dict['pos_embed'] = resize_pos_embed(
-                state_dict['pos_embed'],
-                self.backbone.pos_embed)
+                    state_dict['pos_embed'],
+                    self.backbone.pos_embed
+                )
+            
             missing, unexpected = self.backbone.load_state_dict(state_dict, strict=False) if state_dict else self.backbone.load_state_dict(checkpoint, strict=False)
             print(f"Missing keys: {missing}")
             print(f"Unexpected keys: {unexpected}")
-                
-         
+
         self.embed_dim = self.backbone.embed_dim
         sizes = vit_sizes[vit_size]
         self.num_heads = [sizes['num_heads']]
@@ -73,15 +74,55 @@ class Hydra(nn.Module):
         x = self.backbone.norm_pre(x)
         return x
     
-    def q_mlp(self, block, q: torch.Tensor):
-        q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
-        return q
-    
-    def run_block(self, block, x: torch.Tensor, _):
-        x = block(x)
-        return x
-    
+    def run_block(self, block, eomt_obj, x: torch.Tensor, q, i):
+        if i >= len(self.blocks) - eomt_obj.num_blocks:
+            # --- EoMT Interaction Logic ---
+            
+            # 1. Combine q and x for normalization
+            xq = torch.cat((q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)
+            
+            # 2. Pre-Attention Norm
+            pre_attn = block.norm1(xq)
+            
+            # 3. Split normalized tokens
+            x_norm, q_norm = pre_attn[:, eomt_obj.num_q:, :], pre_attn[:, : eomt_obj.num_q, :]
+            
+            # 4. EoMT Predictions
+            mask_logits, class_logits = eomt_obj._predict(x_norm, q_norm)
+            eomt_obj.mask_logits_per_layer.append(mask_logits)
+            eomt_obj.class_logits_per_layer.append(class_logits)
 
+            # 5. EoMT Cross-Attention
+            after_eomt = torch.cat((q_norm, x_norm), dim=1)
+            new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
+            
+            # 6. Update x and q with Cross-Attention result
+            ls_val = eomt_obj.ls_list[i - len(self.blocks)](new_x)
+            xq = xq + eomt_obj.dp(ls_val)
+            x, q = xq[:, eomt_obj.num_q :, :], xq[:, : eomt_obj.num_q, :]
+            
+            # 7. Standard Block Attention (Self-Attention)
+            # Hydra/ViT blocks usually have: norm1 -> attn -> ls1 -> drop_path1
+            # We apply this to x
+            x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
+            
+            # 8. Standard Block MLP
+            # Hydra/ViT blocks usually have: norm2 -> mlp -> ls2 -> drop_path2
+            # Apply to x
+            x = x + block.drop_path2(block.ls2(block.mlp(block.norm2(x))))
+            
+            # Apply to q (only MLP part, no self-attention for query tokens in this design)
+            q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
+            
+        else:
+            # Standard execution for earlier blocks
+            x = block(x)
+
+        return x, q
+
+    def post_blocks(self, x: torch.Tensor, q, eomt_obj):
+        x = self.norm(x)
+        return x, q
 
 def resize_pos_embed(posemb, posemb_new):
     # posemb: [1, L_old, C], posemb_new: [1, L_new, C]
@@ -104,7 +145,7 @@ def resize_pos_embed(posemb, posemb_new):
     posemb_grid = F.interpolate(posemb_grid, size=(gs_new, gs_new),
                                 mode='bicubic', align_corners=False)
     posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, gs_new * gs_new, -1)
-    print(posemb_grid.shape, extra_tokens.shape)
+    
     return torch.cat([extra_tokens, posemb_grid], dim=1)
 
 def infer_num_tokens(posemb_ckpt, posemb_model):

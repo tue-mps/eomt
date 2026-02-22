@@ -10,4 +10,5 @@ torch==2.5.1
 torchvision==0.20.1
 fvcore==0.1.5.post20221221
 torchmetrics==1.7.1
+torchinfo==1.8.0
 # pycocotools==2.0.8

@@ -33,15 +33,14 @@ class SynthFR(nn.Module):
             init_values=ls_init,
             num_classes=0
         )
-        # num_patches = (img_size[0] // self.backbone.patch_size) ** 2
+        # linformer uses scalar img_size; you already do this and call set_image_res on it. [page:1]
         self.backbone.set_image_res(img_size[0])
         self.num_prefix_tokens = self.backbone.num_prefix_tokens
-        # for block in self.backbone.blocks:
-        #     block.attn.resize(num_patches + self.num_prefix_tokens)
+
         if ckpt_path is not None and os.path.isfile(ckpt_path):
             print("checkpoint found at {}".format(ckpt_path))
-            checkpoint = torch.load(ckpt_path,weights_only=False)
-            
+            checkpoint = torch.load(ckpt_path, weights_only=False)
+
             state_dict = None
             if 'model_state' in checkpoint:
                 state_dict = {k[7:] if k.startswith('module.') else k: v for k, v in checkpoint['model_state'].items()}
@@ -53,8 +52,6 @@ class SynthFR(nn.Module):
                 for key in list(state_dict.keys()): # List to avoid modifying dict while iterating
                     # Check if this is an attention projection layer
                     if "attn" in key and ("proj_k" in key or "proj_v" in key or "random" in key):
-                        
-                        # Ensure key exists in current model
                         if key in model_state:
                             target_weight = model_state[key]
                             source_weight = state_dict[key]
@@ -95,112 +92,114 @@ class SynthFR(nn.Module):
         x = self.backbone.patch_drop(x)
         x = self.backbone.norm_pre(x)
         return x
-    
-    def q_mlp(self, block, q: torch.Tensor):
-        q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
-        return q
-    
-    def run_block(self, block, x: torch.Tensor, _):
-        x = block(x)
-        return x
-    
+
+    def run_block(self, block, eomt_obj, x: torch.Tensor, q, i: int):
+        if i >= len(self.blocks) - eomt_obj.num_blocks:
+            # 1) concat q and x
+            xq = torch.cat((q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)
+            # 2) pre-attention norm
+            pre_attn = block.norm1(xq)
+            x_tok, q_tok = pre_attn[:, eomt_obj.num_q:, :], pre_attn[:, : eomt_obj.num_q, :]
+
+            # 3) EoMT prediction
+            mask_logits, class_logits = eomt_obj._predict(x_tok, q_tok)
+            eomt_obj.mask_logits_per_layer.append(mask_logits)
+            eomt_obj.class_logits_per_layer.append(class_logits)
+
+            # 4) EoMT cross-attention
+            after_eomt = torch.cat((q_tok, x_tok), dim=1)
+            new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
+            xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
+            x, q = xq[:, eomt_obj.num_q:, :], xq[:, : eomt_obj.num_q, :]
+
+            # 5) self-attn + MLP on x
+            x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
+            x = x + block.drop_path2(block.ls2(block.mlp(block.norm2(x))))
+
+            # 6) q_mlp inlined: same MLP path applied to q
+            q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
+        else:
+            # plain SynthFR block
+            x = block(x)
+        return x, q
+
+
+    def post_blocks(self, x: torch.Tensor, q, eomt_obj):
+        x = self.norm(x)
+        return x, q
+
 
 def get_seq_len_for_resize(key: str, w: torch.Tensor) -> int:
     if w.ndim == 2:
         return w.shape[0]
-
     if w.ndim == 3:
-        if "random_attn_1" in key:
-            # [H, L, D] -> seq len is dim=1
+        if "random_attn_1" in key:  # [H, L, D]
             return w.shape[1]
-        if "random_attn_2" in key:
-            # [H, D, L] -> seq len is dim=2
+        if "random_attn_2" in key:  # [H, D, L]
             return w.shape[2]
-
-        # If you have other 3D tensors, decide what you want here:
-        raise ValueError(f"Don't know seq-len dim for 3D tensor key={key}, shape={tuple(w.shape)}")
-
+        raise ValueError(
+            f"Don't know seq-len dim for 3D tensor key={key}, shape={tuple(w.shape)}"
+        )
     raise ValueError(f"Unsupported ndim={w.ndim} for key={key}")
 
+
 def infer_num_tokens(seq_len_old, seq_len_new):
-    """
-    Helper to infer the number of extra tokens (like CLS) by checking which 
-    subtraction makes the remaining sequence length a perfect square.
-    """
-    # Try common cases: 0 or 1 extra tokens
+    """Infer number of extra tokens (like CLS) by checking which subtraction makes the remaining length a perfect square."""
     for n in (1, 0):
-        # Check if removing n tokens results in a perfect square (e.g. 197-1 = 14*14)
-        if (seq_len_old - n) > 0 and int(math.sqrt(seq_len_old - n))**2 == (seq_len_old - n):
+        if (seq_len_old - n) > 0 and int(math.sqrt(seq_len_old - n)) ** 2 == (seq_len_old - n):
             return n
-    
-    # Fallback: try to infer from the new sequence length
     for n in (1, 0):
-        if (seq_len_new - n) > 0 and int(math.sqrt(seq_len_new - n))**2 == (seq_len_new - n):
+        if (seq_len_new - n) > 0 and int(math.sqrt(seq_len_new - n)) ** 2 == (seq_len_new - n):
             return n
-            
-    # Default to 0 if inference fails
     return 0
+
 
 def resize_spatial_weight(weight, target_weight, *, align_corners=False):
     """
-    Two explicit paths only:
-
-    (A) random_attn resize via 1D linear interpolation over seq_len:
-        - r_1 explicit: interpolate(weight.transpose(1,2)).transpose(1,2)   for [H, L, D]
-        - r_2 explicit: interpolate(weight)                                for [H, D, L]
-
-    (B) pos_embed / spatial grid resize via bicubic interpolation on square grids.
-
-    F.interpolate: 'linear' expects 3D (N,C,L); 'bicubic' expects 4D (N,C,H,W). [web:20]
+    Same helper you already had: handles both random_attn 1D interpolation
+    and pos_embed / spatial grids via bicubic interpolation. [page:1]
     """
-
-    # --------------------------
     # Path A: random_attn resize
-    # --------------------------
     if weight.ndim == 3 and target_weight.ndim == 3:
         if weight.shape[0] != target_weight.shape[0]:
-            raise ValueError(f"random_attn head dim mismatch: {weight.shape[0]} vs {target_weight.shape[0]}")
-
+            raise ValueError(
+                f"random_attn head dim mismatch: {weight.shape[0]} vs {target_weight.shape[0]}"
+            )
         if weight.shape == target_weight.shape:
             return weight.to(dtype=target_weight.dtype, device=target_weight.device)
 
         w = weight.to(dtype=target_weight.dtype, device=target_weight.device)
-
-        # Explicit r_1: random_attn_1 is [H, L, D] and needs interpolation over L
-        # by converting to (N,C,L) = [H, D, L] via transpose, interpolating, then transposing back.
+        # random_attn_1: [H, L, D] -> interpolate over L
         if w.shape[2] == target_weight.shape[2]:
             new_max_seq_len = target_weight.shape[1]
             r_1 = F.interpolate(
-                w.transpose(1, 2),          # [H, D, L_old]
-                size=new_max_seq_len,       # L_new
+                w.transpose(1, 2),  # [H, D, L_old]
+                size=new_max_seq_len,
                 mode="linear",
                 align_corners=align_corners,
-            ).transpose(1, 2)               # [H, L_new, D] [web:20]
+            ).transpose(1, 2)  # [H, L_new, D]
             return r_1
-
-        # Explicit r_2: random_attn_2 is already [H, D, L], so interpolate directly on last dim.
+        # random_attn_2: [H, D, L] -> interpolate over L
         if w.shape[1] == target_weight.shape[1]:
             new_max_seq_len = target_weight.shape[2]
             r_2 = F.interpolate(
-                w,                          # [H, D, L_old]
-                size=new_max_seq_len,       # L_new
+                w,
+                size=new_max_seq_len,
                 mode="linear",
                 align_corners=align_corners,
-            )                               # [H, D, L_new] [web:20]
+            )
             return r_2
-
         raise ValueError(
             f"Unrecognized random_attn layout: weight={tuple(weight.shape)} target={tuple(target_weight.shape)}"
         )
 
-    # ---------------------------------------
     # Path B: pos_embed / spatial grid resize
-    # ---------------------------------------
-    is_2d = (weight.ndim == 2)
+    is_2d = weight.ndim == 2
     if not (weight.ndim in (2, 3) and target_weight.ndim == weight.ndim):
-        raise ValueError(f"Unsupported dims for spatial resize: weight.ndim={weight.ndim}, target.ndim={target_weight.ndim}")
+        raise ValueError(
+            f"Unsupported dims for spatial resize: weight.ndim={weight.ndim}, target.ndim={target_weight.ndim}"
+        )
 
-    # Normalize to [1, L, C]
     if is_2d:
         weight_3d = weight.unsqueeze(0)
         target_3d = target_weight.unsqueeze(0)
@@ -209,19 +208,19 @@ def resize_spatial_weight(weight, target_weight, *, align_corners=False):
         target_3d = target_weight
 
     if weight_3d.shape[2] != target_3d.shape[2]:
-        raise ValueError(f"Channel dim mismatch: {weight_3d.shape[2]} vs {target_3d.shape[2]}")
+        raise ValueError(
+            f"Channel dim mismatch: {weight_3d.shape[2]} vs {target_3d.shape[2]}"
+        )
 
     L_old, L_new, C = weight_3d.shape[1], target_3d.shape[1], weight_3d.shape[2]
     if L_old == L_new:
         return weight_3d.squeeze(0) if is_2d else weight_3d
 
-    # infer_num_tokens must exist in your codebase
     num_tokens = infer_num_tokens(L_old, L_new)
-
     extra_tokens = weight_3d[:, :num_tokens, :]  # [1, T, C]
-    grid_tokens  = weight_3d[:, num_tokens:, :]  # [1, G_old, C]
-    G_new = L_new - num_tokens
+    grid_tokens = weight_3d[:, num_tokens:, :]   # [1, G_old, C]
 
+    G_new = L_new - num_tokens
     gs_old = int(math.sqrt(grid_tokens.shape[1]))
     gs_new = int(math.sqrt(G_new))
     if gs_old * gs_old != grid_tokens.shape[1] or gs_new * gs_new != G_new:
@@ -229,14 +228,13 @@ def resize_spatial_weight(weight, target_weight, *, align_corners=False):
             f"Grid tokens not square: G_old={grid_tokens.shape[1]} G_new={G_new} (num_tokens={num_tokens})."
         )
 
-    grid_4d = grid_tokens.reshape(1, gs_old, gs_old, C).permute(0, 3, 1, 2)  # [1,C,H,W]
+    grid_4d = grid_tokens.reshape(1, gs_old, gs_old, C).permute(0, 3, 1, 2)
     grid_4d = F.interpolate(
         grid_4d,
         size=(gs_new, gs_new),
         mode="bicubic",
         align_corners=False,
-    )  # [web:20]
+    )
     grid_new = grid_4d.permute(0, 2, 3, 1).reshape(1, gs_new * gs_new, C)
-
     out = torch.cat([extra_tokens, grid_new], dim=1)
     return out.squeeze(0) if is_2d else out

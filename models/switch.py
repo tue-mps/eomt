@@ -31,7 +31,8 @@ class Switch(nn.Module):
             img_size=img_size[0],
             no_embed_class = True,
             init_values=ls_init,
-            num_classes=0
+            num_classes=0,
+            grad_checkpointing=True
         )
         if ckpt_path is not None and os.path.isfile(ckpt_path):
             print("checkpoint found at {}".format(ckpt_path))
@@ -72,15 +73,41 @@ class Switch(nn.Module):
         x = self.backbone.patch_drop(x)
         x = self.backbone.norm_pre(x)
         return x
-    
-    def q_mlp(self, block, q: torch.Tensor):
-        q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
-        return q
-    
-    def run_block(self, block, x: torch.Tensor, _):
-        x = block(x)
-        return x
-    
+
+    def run_block(self, block, eomt_obj, x: torch.Tensor, q, i: int):
+        """
+        EoMT-aware block execution, structurally aligned with ViT/Hydra/Linformer.
+        Assumes timm ViT blocks expose: norm1, attn, ls1, drop_path1, norm2, mlp, ls2, drop_path2.
+        """
+        if i >= len(self.blocks) - eomt_obj.num_blocks:
+            # ---- EoMT interaction branch ----
+            xq = torch.cat((q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)
+            pre_attn = block.norm1(xq)
+            x, q = pre_attn[:, eomt_obj.num_q :, :], pre_attn[:, : eomt_obj.num_q, :]
+
+            mask_logits, class_logits = eomt_obj._predict(x, q)
+            eomt_obj.mask_logits_per_layer.append(mask_logits)
+            eomt_obj.class_logits_per_layer.append(class_logits)
+
+            after_eomt = torch.cat((q, x), dim=1)
+            new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
+            xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
+            x, q = xq[:, eomt_obj.num_q :, :], xq[:, : eomt_obj.num_q, :]
+
+            # Self-attention and MLP on x
+            x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
+            x = x + block.drop_path2(block.ls2(block.mlp(block.norm2(x))))
+            # MLP on q only
+            q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
+        else:
+            # Standard ViT block execution
+            x = block(x)
+
+        return x, q
+
+    def post_blocks(self, x: torch.Tensor, q, eomt_obj):
+        x = self.norm(x)
+        return x, q
 
 
 def resize_pos_embed(posemb, posemb_new):
