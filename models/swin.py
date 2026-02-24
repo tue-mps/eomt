@@ -29,31 +29,45 @@ class Swin(nn.Module):
         self.backbone.set_image_res(img_size)
         self.backbone = load_swin_ckpt_ignore_attn_mask(self.backbone, ckpt_path)
 
+        # num_heads from swin_sizes — used by EoMT to build its attn/ls modules
         sizes = swin_sizes[swin_size]
         self.num_heads = sizes["num_heads"]
-        self.embed_dim = self.backbone.embed_dim * 2 ** (len(self.num_heads) - 1)
+        self.attn_multiplier = multiplier
+
+        # all structural properties derived from the actual instantiated backbone
+        num_stages = len(self.backbone.layers)
+        self.embed_dim = self.backbone.embed_dim * 2 ** (num_stages - 1)
         self.patch_size = self.backbone.patch_embed.patch_size
         self.grid_size = tuple(
-            x // (2 ** (len(self.num_heads) - 1))
+            x // (2 ** (num_stages - 1))
             for x in self.backbone.patch_embed.patches_resolution
         )
         self.num_prefix_tokens = 0
-        self.depths = sizes["depths"]
 
-        depth_prefix_sum_list = [0]
+        # depths from the live backbone — never from swin_sizes
+        # swin_sizes may have fewer stages than the timm model (e.g. 3 vs 4)
+        self.depths = [len(layer.blocks) for layer in self.backbone.layers]
+
+        # cumulative block-end index per stage (1-based)
+        depth_prefix_sum_list = []
+        s = 0
         for d in self.depths:
-            depth_prefix_sum_list.append(depth_prefix_sum_list[-1] + d)
-        depth_prefix_sum_list.pop(0)
+            s += d
+            depth_prefix_sum_list.append(s)
 
-        # downsample (patch merging) modules keyed by the *ending* block index in that stage
+        # PatchMerging modules keyed by cumulative block count at each stage end.
+        # Only stages with an actual downsample (all but the last) are registered.
         self.patch_merging_dict = nn.ModuleDict(
-            {str(d): layer.downsample for d, layer in zip(depth_prefix_sum_list, self.backbone.layers)}
+            {
+                str(end): layer.downsample
+                for end, layer in zip(depth_prefix_sum_list, self.backbone.layers)
+                if layer.downsample is not None
+            }
         )
 
         # flatten all Swin blocks into a single list for iteration
         self.blocks = [block for layer in self.backbone.layers for block in layer.blocks]
         self.norm = self.backbone.norm
-        self.attn_multiplier = multiplier
 
         pixel_mean = torch.tensor(IMAGENET_DEFAULT_MEAN).reshape(1, -1, 1, 1)
         pixel_std = torch.tensor(IMAGENET_DEFAULT_STD).reshape(1, -1, 1, 1)
@@ -61,80 +75,98 @@ class Swin(nn.Module):
         self.register_buffer("pixel_std", pixel_std)
 
     def pre_block(self, x: torch.Tensor):
-        # Swin keeps features in B,C,H,W; patch_embed already does that.
+        # patch_embed outputs (B, H*W, C) — native token layout of backbones/swin.py
         x = self.backbone.patch_embed(x)
+        if self.backbone.ape:
+            x = x + self.backbone.absolute_pos_embed
+        x = self.backbone.pos_drop(x)
         return x
 
     def run_block(self, block, eomt_obj, x: torch.Tensor, q, i: int):
         """
         EoMT-aware Swin block runner.
 
-        Swin blocks operate on B,C,H,W internally but are implemented as transformers
-        over sequences using windowed attention. Here we:
-        - treat x as [B, N, C] tokens for EoMT,
-        - then reshape back to B,C,H,W for the Swin block and downsample.
+        backbones/swin.py SwinTransformerBlock.forward() takes x of shape
+        (B, H*W, C). All window-partition, cyclic-shift, W-MSA/SW-MSA, and
+        FFN logic lives inside the block and operates on that flat layout.
+
+        x stays as (B, L, C) throughout.
+        q stays as (num_q, C) — unbatched — consistent with EoMT.forward().
         """
-        B, C, H, W = x.shape
+        H, W = block.input_resolution
+        B, L, C = x.shape
+        assert L == H * W, (
+            f"Token count {L} does not match block resolution {H}x{W}={H * W}"
+        )
 
-        # Flatten to tokens for EoMT (channel-last) if we are in the EoMT region
         if i >= len(self.blocks) - eomt_obj.num_blocks:
-            x_seq = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
+            eomt_idx = i - (len(self.blocks) - eomt_obj.num_blocks)
 
-            # 1) concat q and x
-            xq = torch.cat((q[None, :, :].expand(x_seq.shape[0], -1, -1), x_seq), dim=1)
+            # expand q to batch: (num_q, C) -> (B, num_q, C)
+            q_batched = q[None].expand(B, -1, -1)
 
-            # 2) pre-attention norm using Swin block.norm1
+            # 1) concat query tokens in front of image tokens: (B, num_q+L, C)
+            xq = torch.cat([q_batched, x], dim=1)
+
+            # 2) pre-attention norm via block.norm1
+            #    correctly sized for this stage's C (not the final-stage norm)
             pre_attn = block.norm1(xq)
-            x_tok, q_tok = pre_attn[:, eomt_obj.num_q :, :], pre_attn[:, : eomt_obj.num_q, :]
+            q_tok = pre_attn[:, : eomt_obj.num_q, :]  # (B, num_q, C)
+            x_tok = pre_attn[:, eomt_obj.num_q :, :]  # (B, L, C)
 
-            # 3) EoMT prediction
+            # 3) EoMT prediction heads
             mask_logits, class_logits = eomt_obj._predict(x_tok, q_tok)
             eomt_obj.mask_logits_per_layer.append(mask_logits)
             eomt_obj.class_logits_per_layer.append(class_logits)
 
             # 4) EoMT cross-attention
-            after_eomt = torch.cat((q_tok, x_tok), dim=1)
-            new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
-            xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
+            #    CrossAttentionSingleInput carries its own norm — do NOT apply
+            #    self.norm here (it is LayerNorm sized for the final stage only)
+            after_eomt = torch.cat([q_tok, x_tok], dim=1)  # (B, num_q+L, C)
+            new_x = eomt_obj.attn[eomt_idx](after_eomt)
+            xq = xq + eomt_obj.dp(eomt_obj.ls_list[eomt_idx](new_x))
 
-            # 5) split back into x and q
-            x_seq, q = xq[:, eomt_obj.num_q :, :], xq[:, : eomt_obj.num_q, :]
+            # 5) split back
+            q_batched = xq[:, : eomt_obj.num_q, :]  # (B, num_q, C)
+            x = xq[:, eomt_obj.num_q :, :]          # (B, L, C)
 
-            # 6) reshape x_seq back to B,C,H,W for the Swin block
-            x = x_seq.reshape(B, H, W, C).permute(0, 3, 1, 2)
-
-            # 7) standard Swin block (attn + mlp with its own drop_path)
+            # 6) standard Swin block: (B, L, C) -> (B, L, C)
+            #    handles norm1, cyclic-shift, window-partition,
+            #    W-MSA/SW-MSA, reverse-shift, residual, norm2, MLP, residual
             x = block(x)
 
-            # 8) q_mlp integrated here: apply the block's MLP normalization and drop_path to q.
-            # Swin blocks do not expose ls2 / drop_path2, only a single drop_path.
-            # We reuse norm2 + mlp + drop_path on q in token space.
-            q = q + block.drop_path(block.mlp(block.norm2(q)))
+            # 7) mirror Swin FFN sub-layer for query tokens:
+            #    shortcut + drop_path(mlp(norm2(q)))
+            q_batched = q_batched + block.drop_path(block.mlp(block.norm2(q_batched)))
+
+            # collapse batch dim back to (num_q, C) as expected by EoMT
+            q = q_batched.mean(dim=0)
 
         else:
-            # plain Swin block without EoMT
+            # plain Swin block — (B, L, C) in, (B, L, C) out
             x = block(x)
 
-        # handle downsampling between stages
+        # PatchMerging between stages: (B, H*W, C) -> (B, H/2*W/2, 2C)
+        # key is the 1-based cumulative block count at the end of each stage
         ds_idx = str(i + 1)
-        if ds_idx in self.patch_merging_dict and self.patch_merging_dict[ds_idx] is not None:
+        if ds_idx in self.patch_merging_dict:
             x = self.patch_merging_dict[ds_idx](x)
 
         return x, q
 
     def post_blocks(self, x: torch.Tensor, q, eomt_obj):
-        # final norm operates on sequence in original Swin, but here x is B,C,H,W.
-        # flatten, norm, then reshape back.
-        B, C, H, W = x.shape
-        x_seq = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
-        x_seq = self.norm(x_seq)
-        x = x_seq.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        # backbone norm operates directly on (B, L, C) — no reshape needed
+        x = self.norm(x)
         return x, q
 
 
 def load_swin_ckpt_ignore_attn_mask(model, ckpt_path):
+    if ckpt_path is None:
+        return model
+
     # 1) Load checkpoint state dict
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    state_dict = None
     if "model_state" in checkpoint:
         state_dict = {
             k[7:] if k.startswith("module.") else k: v
@@ -145,6 +177,9 @@ def load_swin_ckpt_ignore_attn_mask(model, ckpt_path):
             k[9:] if k.startswith("backbone.") else k: v
             for k, v in checkpoint["teacher"].items()
         }
+    else:
+        state_dict = checkpoint
+
     if "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]
 

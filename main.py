@@ -7,6 +7,8 @@
 # ---------------------------------------------------------------
 
 
+import argparse
+
 import jsonargparse._typehints as _t
 from types import MethodType
 from gitignore_parser import parse_gitignore
@@ -154,7 +156,7 @@ class LightningCLI(cli.LightningCLI):
         self.trainer.fit(model, **kwargs)
 
 
-def cli_main():
+def cli_main(name):
     LightningCLI(
         LightningModule,
         LightningDataModule,
@@ -168,7 +170,12 @@ def cli_main():
             "callbacks": [
                 ModelSummary(max_depth=3),
                 LearningRateMonitor(logging_interval="epoch"),
-                ModelCheckpoint(dirpath="/netscratch/billimoria/"),
+                ModelCheckpoint(dirpath="/netscratch/billimoria/",
+                                filename=f"{name}",
+                                monitor="val_loss",       # metric to track
+                                mode="min",               # "min" for loss, "max" for accuracy
+                                save_top_k=1,             # save best checkpoint
+                                save_last=False)
 
             ],
             "devices": 'auto',
@@ -179,4 +186,10 @@ def cli_main():
 
 
 if __name__ == "__main__":
-    cli_main()
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--name", type=str, default="default")
+    temp_args, _ = pre_parser.parse_known_args()
+
+    # Use the pre-read value for custom logic
+    print(f"Running experiment: {temp_args.name}")
+    cli_main(temp_args.name)

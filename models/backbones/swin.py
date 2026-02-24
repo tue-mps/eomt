@@ -629,7 +629,7 @@ class SwinTransformer(nn.Module):
         self.embed_dim = embed_dim
         self.ape = ape
         self.patch_norm = patch_norm
-        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.num_features = int(embed_dim * 2 ** (self.num_layers))
         self.mlp_ratio = mlp_ratio
         self.img_size = img_size
         self.fused_window_process = fused_window_process
