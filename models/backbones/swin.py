@@ -15,6 +15,8 @@ import torch.utils.checkpoint as checkpoint
 from timm.models import register_model
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
+# from resizing_interface import ResizingInterface
+
 try:
     import os
     import sys
@@ -629,7 +631,7 @@ class SwinTransformer(nn.Module):
         self.embed_dim = embed_dim
         self.ape = ape
         self.patch_norm = patch_norm
-        self.num_features = int(embed_dim * 2 ** (self.num_layers))
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
         self.img_size = img_size
         self.fused_window_process = fused_window_process
@@ -838,77 +840,47 @@ class SwinTransformer(nn.Module):
 
 
 swin_sizes = {
-    "Ti": dict(embed_dim=96, depths=[2, 4, 6], num_heads=[3, 6, 12]),
-    "S": dict(embed_dim=96, depths=[2, 4, 18], num_heads=[3, 6, 12]),
-    "B": dict(embed_dim=128, depths=[2, 4, 18], num_heads=[4, 8, 16]),
-    "L": dict(embed_dim=192, depths=[2, 4, 18], num_heads=[6, 12, 24]),
-    "WTi": dict(embed_dim=96, depths=[4, 8], num_heads=[6, 12]),
-    "WS": dict(embed_dim=96, depths=[6, 18], num_heads=[6, 12]),
-    "WB": dict(embed_dim=128, depths=[6, 18], num_heads=[8, 16]),
+    "Ti": dict(embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24]),
+    "S": dict(embed_dim=96, depths=[2, 2, 18, 2], num_heads=[3, 6, 12, 24]),
+    "B": dict(embed_dim=128, depths=[2, 2, 18, 2], num_heads=[4, 8, 16, 32]),
+    "L": dict(embed_dim=192, depths=[2, 2, 18, 2], num_heads=[6, 12, 24, 48]),
 }
 
 
-
 @register_model
-def swin_tiny_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
+def swin_tiny_window7(pretrained=False, img_size=224, **kwargs):
     if "pretrained_cfg" in kwargs:
         kwargs.pop("pretrained_cfg")
     size = swin_sizes["Ti"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
+    model = SwinTransformer(img_size=img_size, patch_size=4, window_size=7, **size, **kwargs)
     return model
 
 
 @register_model
-def swin_wide_tiny_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
+def swin_small_window7(pretrained=False, img_size=224, **kwargs):
     if "pretrained_cfg" in kwargs:
         kwargs.pop("pretrained_cfg")
-    size = swin_sizes["WTi"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
-    return model
-
-
-@register_model
-def swin_small_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
-    if "pretrained_cfg" in kwargs:
-        kwargs.pop("pretrained_cfg")
+    print("running from custom swin_small_patch4_window7")
     size = swin_sizes["S"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
+    model = SwinTransformer(img_size=img_size, patch_size=4, window_size=7, **size, **kwargs)
     return model
 
 
 @register_model
-def swin_wide_small_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
-    if "pretrained_cfg" in kwargs:
-        kwargs.pop("pretrained_cfg")
-    size = swin_sizes["WS"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
-    return model
-
-
-@register_model
-def swin_base_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
+def swin_base_window7(pretrained=False, img_size=224, **kwargs):
     if "pretrained_cfg" in kwargs:
         kwargs.pop("pretrained_cfg")
     size = swin_sizes["B"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
+    model = SwinTransformer(img_size=img_size, patch_size=4, window_size=7, **size, **kwargs)
     return model
 
 
 @register_model
-def swin_wide_base_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
-    if "pretrained_cfg" in kwargs:
-        kwargs.pop("pretrained_cfg")
-    size = swin_sizes["WB"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
-    return model
-
-
-@register_model
-def swin_large_window7(pretrained=False, img_size=224, patch_size=4, **kwargs):
+def swin_large_window7(pretrained=False, img_size=224, **kwargs):
     if "pretrained_cfg" in kwargs:
         kwargs.pop("pretrained_cfg")
     size = swin_sizes["L"]
-    model = SwinTransformer(img_size=img_size, patch_size=patch_size, window_size=7, **size, **kwargs)
+    model = SwinTransformer(img_size=img_size, patch_size=4, window_size=7, **size, **kwargs)
     return model
 
 
