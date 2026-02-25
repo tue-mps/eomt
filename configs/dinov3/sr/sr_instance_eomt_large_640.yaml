@@ -1,0 +1,29 @@
+trainer:
+  max_epochs: 12
+  check_val_every_n_epoch: 2
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "coco_instance_eomt_large_640_dinov3"
+model:
+  class_path: training.mask_classification_instance.MaskClassificationInstance
+  init_args:
+    attn_mask_annealing_enabled: True
+    attn_mask_annealing_start_steps: [14782, 29564, 44346, 59128]
+    attn_mask_annealing_end_steps: [29564, 44346, 59128, 73910]
+    lr: 2e-4
+    llrd_l2_enabled: False
+    warmup_steps: [2000, 3000]
+    delta_weights: True
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 200
+        encoder:
+          class_path: models.vit.ViT
+          init_args:
+            backbone_name: facebook/dinov3-vitl16-pretrain-lvd1689m
+data:
+  class_path: datasets.coco_instance.COCOInstance

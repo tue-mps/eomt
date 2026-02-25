@@ -6,7 +6,7 @@
 
 from pathlib import Path
 from typing import Union
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset  # MODIFIED: Added Subset
 from torchvision import tv_tensors
 from pycocotools import mask as coco_mask
 import torch
@@ -110,6 +110,8 @@ class COCOInstance(LightningDataModule):
         color_jitter_enabled=False,
         scale_range=(0.1, 2.0),
         check_empty_targets=True,
+        max_train_samples: int = None,  # NEW: Limit training samples
+        max_val_samples: int = None,    # NEW: Limit validation samples
     ) -> None:
         super().__init__(
             path=path,
@@ -120,6 +122,10 @@ class COCOInstance(LightningDataModule):
             check_empty_targets=check_empty_targets,
         )
         self.save_hyperparameters(ignore=["_class_path"])
+
+        # NEW: Store max samples parameters
+        self.max_train_samples = max_train_samples
+        self.max_val_samples = max_val_samples
 
         self.transforms = Transforms(
             img_size=img_size,
@@ -174,6 +180,19 @@ class COCOInstance(LightningDataModule):
             zip_path=Path(self.path, "val2017.zip"),
             **dataset_kwargs,
         )
+
+        # NEW: Limit datasets if max_samples specified
+        if self.max_train_samples is not None:
+            num_samples = min(self.max_train_samples, len(self.train_dataset))
+            indices = list(range(num_samples))
+            self.train_dataset = Subset(self.train_dataset, indices)
+            print(f"[INFO] Limited train dataset to {num_samples} samples")
+        
+        if self.max_val_samples is not None:
+            num_samples = min(self.max_val_samples, len(self.val_dataset))
+            indices = list(range(num_samples))
+            self.val_dataset = Subset(self.val_dataset, indices)
+            print(f"[INFO] Limited validation dataset to {num_samples} samples")
 
         return self
 

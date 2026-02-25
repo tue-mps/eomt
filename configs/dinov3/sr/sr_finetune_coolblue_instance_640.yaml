@@ -1,0 +1,37 @@
+trainer:
+  max_epochs: 6
+  check_val_every_n_epoch: 1
+  precision: 16-mixed # Use 16-bit mixed precision to fit in 6GB VRAM
+  accumulate_grad_batches: 16 # Effective batch size 16 = 16 * 1
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "coolblue_instance_eomt_large_640_dinov3"
+model:
+  class_path: training.mask_classification_instance.MaskClassificationInstance
+  init_args:
+    attn_mask_annealing_enabled: False
+    lr: 5e-5 # Lower learning rate for fine-tuning
+    llrd_l2_enabled: False
+    warmup_steps: [500, 1000]
+    delta_weights: True # Fine-tune from pretrained weights
+    load_ckpt_class_head: False # Ignore classification if other classes compared to COCO dataset
+    num_classes: 80 # Keep 80 classes to load pretrained weights perfectly
+    ckpt_path: "weights/pytorch_model.bin"
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 200
+        encoder:
+          class_path: models.vit.ViT
+          init_args:
+            backbone_name: facebook/dinov3-vitl16-pretrain-lvd1689m
+data:
+  class_path: datasets.coolblue_instance.CoolblueInstance
+  init_args:
+    path: datasets/sr/coolblue_2024_12
+    num_classes: 80 # Matches the model
+    batch_size: 1 # Extremely small batch size for 6GB GPU
+    img_size: [640, 640]

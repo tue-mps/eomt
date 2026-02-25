@@ -869,10 +869,14 @@ class LightningModule(lightning.LightningModule):
                 raise KeyError(f"Key {k} not found in second state_dict")
 
             if state_dict1[k].shape != state_dict2[k].shape:
-                raise ValueError(
+                logging.warning(
                     f"Shape mismatch at {k}: "
-                    f"{state_dict1[k].shape} vs {state_dict2[k].shape}"
+                    f"{state_dict1[k].shape} vs {state_dict2[k].shape}. "
+                    f"Skipping this parameter."
                 )
+                # Use only the current model's initialized weights for this parameter
+                summed[k] = state_dict1[k]
+                continue
 
             summed[k] = state_dict1[k] + state_dict2[k]
 

@@ -3,6 +3,10 @@
 _site/
 lightning_logs/
 wandb/
+weights/
+datasets/coco
+datasets/sr
+Miniconda3-latest-Linux-x86_64.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
