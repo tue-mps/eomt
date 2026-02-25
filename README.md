@@ -18,13 +18,11 @@ Turns out, *your ViT is secretly an image segmentation model*. EoMT shows that a
 
 ## 🚀 NEW: VidEoMT 
 
-🔥 We're pleased to present our latest paper, VidEoMT, accepted at CVPR 2026.
+🔥 We're pleased to present our latest CVPR 2026 paper, [VidEoMT: Your ViT is Secretly Also a Video Segmentation Model](https://arxiv.org/abs/2602.17807).
 
 VidEoMT extends EoMT philosophy to the temporal domain, introducing an encoder-only video segmentation model that is up to 10x faster than competitors.
 
-Go check it out!  
-
-📄 [Paper](https://arxiv.org/abs/2602.17807)  💻 [Code](https://github.com/tue-mps/videomt)
+Go check it [out](https://github.com/tue-mps/videomt)! 
 
 
 ## 🚀 NEW: DINOv3 Support
