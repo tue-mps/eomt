@@ -16,6 +16,17 @@ Leveraging large-scale pre-trained ViTs, EoMT achieves accuracy similar to state
 
 Turns out, *your ViT is secretly an image segmentation model*. EoMT shows that architectural complexity isn't necessary. For segmentation, a plain Transformer is all you need.
 
+## 🚀 NEW: VidEoMT 
+
+🔥 We're pleased to present our latest paper, VidEoMT, accepted at CVPR 2026.
+
+VidEoMT extends EoMT philosophy to the temporal domain, introducing an encoder-only video segmentation model that is up to 10x faster than competitors.
+
+Go check it out!  
+
+📄 [Paper](https://arxiv.org/abs/2602.17807)  💻 [Code](https://github.com/tue-mps/videomt)
+
+
 ## 🚀 NEW: DINOv3 Support
 
 🔥 We're excited to announce support for **DINOv3** backbones! Our new DINOv3-based EoMT models deliver improved performance across all segmentation tasks:
