@@ -35,18 +35,17 @@ class Swin(nn.Module):
         self.attn_multiplier = multiplier
 
         # all structural properties derived from the actual instantiated backbone
-        num_stages = len(self.backbone.layers)
-        self.embed_dim = self.backbone.embed_dim * 2 ** (num_stages - 1)
+        self.embed_dim = self.backbone.num_features  # already = embed_dim * 2^(num_layers-1)
         self.patch_size = self.backbone.patch_embed.patch_size
         self.grid_size = tuple(
-            x // (2 ** (num_stages - 1))
+            x // (2 ** (len(sizes["depths"]) - 1))
             for x in self.backbone.patch_embed.patches_resolution
         )
         self.num_prefix_tokens = 0
 
         # depths from the live backbone — never from swin_sizes
         # swin_sizes may have fewer stages than the timm model (e.g. 3 vs 4)
-        self.depths = [len(layer.blocks) for layer in self.backbone.layers]
+        self.depths = sizes["depths"]
 
         # cumulative block-end index per stage (1-based)
         depth_prefix_sum_list = []
@@ -102,8 +101,10 @@ class Swin(nn.Module):
         if i >= len(self.blocks) - eomt_obj.num_blocks:
             eomt_idx = i - (len(self.blocks) - eomt_obj.num_blocks)
 
-            # expand q to batch: (num_q, C) -> (B, num_q, C)
-            q_batched = q[None].expand(B, -1, -1)
+            if q.dim() == 2:
+                q_batched = q[None].expand(B, -1, -1)
+            else:
+                q_batched = q
 
             # 1) concat query tokens in front of image tokens: (B, num_q+L, C)
             xq = torch.cat([q_batched, x], dim=1)
@@ -123,7 +124,7 @@ class Swin(nn.Module):
             #    CrossAttentionSingleInput carries its own norm — do NOT apply
             #    self.norm here (it is LayerNorm sized for the final stage only)
             after_eomt = torch.cat([q_tok, x_tok], dim=1)  # (B, num_q+L, C)
-            new_x = eomt_obj.attn[eomt_idx](after_eomt)
+            new_x = eomt_obj.attn[eomt_idx](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[eomt_idx](new_x))
 
             # 5) split back
@@ -140,7 +141,7 @@ class Swin(nn.Module):
             q_batched = q_batched + block.drop_path(block.mlp(block.norm2(q_batched)))
 
             # collapse batch dim back to (num_q, C) as expected by EoMT
-            q = q_batched.mean(dim=0)
+            q = q_batched
 
         else:
             # plain Swin block — (B, L, C) in, (B, L, C) out

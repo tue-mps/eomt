@@ -25,7 +25,7 @@ from contextlib import nullcontext
 
 import torch.cuda
 from fvcore.nn import FlopCountAnalysis
-from loguru import logger
+
 from torchprofile import profile_macs
 
 def macs(args, model, input, n_ims=1):
@@ -123,6 +123,6 @@ def flops(args, model, input, per_module=False, n_ims=1):
         try:
             return fca.total()
         except IndexError as e:
-            logger.error(f"IndexError {e} when calculating flops. Might come from timm model.")
+            print(f"IndexError {e} when calculating flops. Might come from timm model.")
             traceback.print_exc()
             return -1

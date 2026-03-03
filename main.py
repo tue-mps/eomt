@@ -110,7 +110,7 @@ class LightningCLI(cli.LightningCLI):
 
     def add_arguments_to_parser(self, parser):
         parser.add_argument("--compile_disabled", action="store_true")
-
+        parser.add_argument("--name", type=str, default="default")
         parser.link_arguments(
             "data.init_args.num_classes", "model.init_args.num_classes"
         )
@@ -172,8 +172,8 @@ def cli_main(name):
                 LearningRateMonitor(logging_interval="epoch"),
                 ModelCheckpoint(dirpath="/netscratch/billimoria/",
                                 filename=f"{name}",
-                                monitor="val_loss",       # metric to track
-                                mode="min",               # "min" for loss, "max" for accuracy
+                                monitor="metrics/val_iou_all",       # metric to track
+                                mode="max",               # "min" for loss, "max" for accuracy
                                 save_top_k=1,             # save best checkpoint
                                 save_last=False)
 

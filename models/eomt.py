@@ -126,7 +126,11 @@ class EoMT(nn.Module):
             x, q = self.encoder.run_block(block, self, x, self.q, i)
         
         x,q = self.encoder.post_blocks(x,q,self)
-            
+        # Collect Switch load-balancing loss if the backbone supports it
+        if hasattr(self.encoder.backbone, 'get_internal_loss'):
+            self.switch_aux_loss = self.encoder.backbone.get_internal_loss()
+        else:
+            self.switch_aux_loss = None
         mask_logits, class_logits = self._predict(x,q=q)
         self.mask_logits_per_layer.append(mask_logits)
         self.class_logits_per_layer.append(class_logits)

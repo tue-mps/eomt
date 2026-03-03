@@ -193,7 +193,15 @@ class LightningModule(lightning.LightningModule):
             losses = {f"{key}{block_postfix}": value for key, value in losses.items()}
             losses_all_blocks |= losses
 
-        return self.criterion.loss_total(losses_all_blocks, self.log)
+        total_loss = self.criterion.loss_total(losses_all_blocks, self.log)
+
+        # Add Switch load-balancing auxiliary loss
+        switch_aux = getattr(self.network, 'switch_aux_loss', None)
+        if switch_aux is not None:
+            self.log("train/switch_aux_loss", switch_aux, on_step=True, on_epoch=False)
+            total_loss = total_loss + switch_aux
+
+        return total_loss
 
     def validation_step(self, batch, batch_idx=0):
         return self.eval_step(batch, batch_idx, "val")

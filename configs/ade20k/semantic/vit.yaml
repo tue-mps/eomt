@@ -26,6 +26,7 @@ model:
             patch_size: 16
             ls_init: 1e-6
             ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/ViT-B.pt"
+            vit_size: "B"
 data:
   class_path: datasets.ade20k_semantic.ADE20KSemantic
   init_args:
@@ -53,3 +54,11 @@ data:
 
 #dino
 # vit_small.pt       swin_wide_small_w7_p4.pth   vit_base.pt
+
+
+#  sbatch run_script.sh main.py fit --name semantic_vit_512_S -c configs/ade20k/semantic/vit.yaml 
+# --trainer.devices 2 --data.batch_size 8 --data.path /ds-sds/images/ADE20k1 
+# --model.init_args.network.init_args.encoder.init_args.ckpt_path /netscratch/nauen/trained_models/imagenet21k/ViT-S_IN21k.pt 
+# --compile_disabled --model.init_args.network.init_args.encoder.init_args.backbone_name vit_small_patch16_224 
+# --model.init_args.network.init_args.encoder.init_args.vit_size S 
+# --data.init_args.img_size "[512,512]" --trainer.logger.init_args.name ade20k_semantic_vit-S_512

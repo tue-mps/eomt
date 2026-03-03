@@ -31,8 +31,7 @@ class Switch(nn.Module):
             img_size=img_size[0],
             no_embed_class = True,
             init_values=ls_init,
-            num_classes=0,
-            grad_checkpointing=True
+            num_classes=0
         )
         if ckpt_path is not None and os.path.isfile(ckpt_path):
             print("checkpoint found at {}".format(ckpt_path))
@@ -68,6 +67,7 @@ class Switch(nn.Module):
         self.register_buffer("pixel_std", pixel_std)
 
     def pre_block(self, x: torch.Tensor):
+        self.train()
         x = self.backbone.patch_embed(x)
         x = self.backbone._pos_embed(x)
         x = self.backbone.patch_drop(x)
@@ -79,6 +79,7 @@ class Switch(nn.Module):
         EoMT-aware block execution, structurally aligned with ViT/Hydra/Linformer.
         Assumes timm ViT blocks expose: norm1, attn, ls1, drop_path1, norm2, mlp, ls2, drop_path2.
         """
+        print(f"running block {self.training} {i}")
         if i >= len(self.blocks) - eomt_obj.num_blocks:
             # ---- EoMT interaction branch ----
             xq = torch.cat((q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)
@@ -131,7 +132,6 @@ def resize_pos_embed(posemb, posemb_new):
     posemb_grid = F.interpolate(posemb_grid, size=(gs_new, gs_new),
                                 mode='bicubic', align_corners=False)
     posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, gs_new * gs_new, -1)
-    print(posemb_grid.shape, extra_tokens.shape)
     return torch.cat([extra_tokens, posemb_grid], dim=1)
 
 def infer_num_tokens(posemb_ckpt, posemb_model):

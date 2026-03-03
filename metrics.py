@@ -1,17 +1,15 @@
 
 
 from contextlib import nullcontext
-from .metrics_ops import (flops,macs)
+from metrics_ops import (flops,macs)
 
 from time import time
-from typing import Dict
 
 import psutil
 import torch.cuda
 import torch.distributed as dist
-from fvcore.nn import FlopCountAnalysis
-from loguru import logger
-from torchprofile import profile_macs
+
+
 from tqdm.auto import tqdm
  
 
@@ -61,7 +59,7 @@ def calculate_metrics(
     if input.size(0) == 1 and args.batch_size > 1:
         input = input[0]
 
-    logger.info(f"Calculating metrics on input of shape {input.shape}.")
+    print(f"Calculating metrics on input of shape {input.shape}.")
 
     metrics = {key_start + "number of parameters": number_of_params(model)}
     if input is None:
@@ -89,8 +87,8 @@ def calculate_metrics(
         )
     except RuntimeError as e:
         metrics[key_start + "flops"] = metrics[key_start + "macs"]
-        logger.warning(f"Failed to calculate flops: {e}")
-        logger.warning("Setting flops equal to macs!")
+        print(f"Failed to calculate flops: {e}")
+        print("Setting flops equal to macs!")
 
     if device is None:
         return metrics
@@ -100,12 +98,12 @@ def calculate_metrics(
             metrics[key_start + f"inference_memory_@{bs}"] = inference_mem
 
     if optim is None or scaler is None or train_loader is None:
-        logger.info(
+        print(
             f"Skipping training time calculation, since one of these is None: optimizer={optim}, scaler={scaler},"
             f" train_loader={train_loader}"
         )
     else:
-        logger.info(f"Calculating training time for 200 steps at batch size {args.batch_size}")
+        print(f"Calculating training time for 200 steps at batch size {args.batch_size}")
         max_mem_allocated(device, world_size)
         train_time = training_time(
             args, model=model, optim=optim, scaler=scaler, data_loader=train_loader, device=device, max_iters=200
@@ -332,37 +330,37 @@ def throughput(args, model, input, device, iters=100):
         #     else:
         #         input = input[:bs]
         #     n_ims = input.shape[0]
-        logger.info(f"thoughput calculation: test batch size {bs}")
+        print(f"thoughput calculation: test batch size {bs}")
         if args.cuda:
             try:
                 tp = _measure_throughput_cuda(model, input, iters, args.eval_amp, use_tqdm=args.tqdm)
             except RuntimeError as e:
                 if "canUse32BitIndexMath" in str(e):
-                    logger.info(f"throughput calculation: tensor too large @ {bs}")
+                    print(f"throughput calculation: tensor too large @ {bs}")
                 else:
-                    logger.info(f"throughput calculation: CUDA OOM @ {bs}")
+                    print(f"throughput calculation: CUDA OOM @ {bs}")
                 break
         else:
             tp = _measure_throughput_cpu(model, input, iters, use_tqdm=args.tqdm)
-            logger.debug(f"used {_get_ram_usage()} MiB of {_get_ram_total()} MiB RAM")
+            print(f"used {_get_ram_usage()} MiB of {_get_ram_total()} MiB RAM")
         if len(results) > 1 and (tp < 0.98 * results[-1][1] or tp <= 0.95 * max(res_tp for _, res_tp in results)):
             n_decr += 1
         else:
             n_decr = 0
-        logger.debug(f"decreasing trend for {n_decr} steps in a row")
+        print(f"decreasing trend for {n_decr} steps in a row")
         results.append((bs, tp))
-        logger.info(f"throughput calculation: throughput @ {bs} = {tp} images/second")
+        print(f"throughput calculation: throughput @ {bs} = {tp} images/second")
         if not args.cuda and _get_ram_usage() > 0.5 * _get_ram_total():
-            logger.info(f"throughput calculation: used more than 50% of total RAM @ {bs}; stopping further calculation")
+            print(f"throughput calculation: used more than 50% of total RAM @ {bs}; stopping further calculation")
             break
         if n_decr >= 2:
-            logger.info(
+            print(
                 "decreasing throughput trend for 3 sizes:"
                 f" {' -> '.join([f'{tp_r:.2f} @ {bs_r}' for bs_r, tp_r in results[-3:]])}; stopping further calculation"
             )
             break
         if len(results) >= 2 and results[-1][1] < 0.5 * results[-2][1]:
-            logger.info(f"throughput calculation: throughput dropped below 50% of previous value @ {bs}; stopping now")
+            print(f"throughput calculation: throughput dropped below 50% of previous value @ {bs}; stopping now")
             break
         input = torch.cat((input, input), dim=0)
         bs *= 2

@@ -22,7 +22,7 @@ model:
         encoder:
           class_path: models.linformer.Linformer
           init_args:
-            backbone_name: "linformer_vit_base_patch16"
+            backbone_name: "linformer_vit_small_patch16"
             ls_init: 1e-6
             ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/Linformer_IN21k.pt"
 data:
