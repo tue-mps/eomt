@@ -1,20 +1,25 @@
 from typing import Optional
-from collections import OrderedDict
 
+import timm
 import torch
 import torch.nn as nn
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
+# Import the backbone module so its @register_model decorators run,
+# registering focalnet_* names into timm's model registry.
+import models.backbones.focalnet  # noqa: F401
 from models.backbones.focalnet import FocalNet
 
 
-# Maps variant name -> config used when constructing FocalNet directly
+# Structural metadata for the small SRF variant.
+# depths/embed_dim must match what focalnet_small_srf registers.
 focalnet_sizes = {
-    "T": {"depths": [2, 2, 6, 2],  "embed_dim": 96,  "focal_levels": [2, 2, 2, 2], "focal_windows": [3, 3, 3, 3]},
-    "S": {"depths": [2, 2, 18, 2], "embed_dim": 96,  "focal_levels": [2, 2, 2, 2], "focal_windows": [3, 3, 3, 3]},
-    "B": {"depths": [2, 2, 18, 2], "embed_dim": 128, "focal_levels": [2, 2, 2, 2], "focal_windows": [3, 3, 3, 3]},
-    "L": {"depths": [2, 2, 18, 2], "embed_dim": 192, "focal_levels": [3, 3, 3, 3], "focal_windows": [5, 5, 5, 5]},
-    "XL": {"depths": [2, 2, 18, 2], "embed_dim": 256, "focal_levels": [3, 3, 3, 3], "focal_windows": [5, 5, 5, 5]},
+    "S": {
+        "backbone_name": "focalnet_small_srf",
+        "depths": [2, 2, 18, 2],
+        "embed_dim": 96,
+        "num_heads": [3, 6, 12, 24],  # embed_dim * 2^i / 32
+    },
 }
 
 
@@ -22,49 +27,35 @@ class FocalNetModel(nn.Module):
     def __init__(
         self,
         img_size: tuple[int, int],
-        focalnet_size: str = "T",
+        backbone_name: str = "focalnet_small_srf",
+        focalnet_size: str = "S",
         multiplier: int = 1,
         ckpt_path: Optional[str] = None,
-        use_conv_embed: bool = False,
-        use_layerscale: bool = False,
-        use_postln: bool = False,
-        use_postln_in_modulation: bool = False,
-        normalize_modulator: bool = False,
     ):
         super().__init__()
 
-        sizes = focalnet_sizes[focalnet_size]
-
-        self.backbone: FocalNet = FocalNet(
-            img_size=img_size[0],  # FocalNet expects a single int or square tuple
-            in_chans=3,
+        self.backbone: FocalNet = timm.create_model(
+            backbone_name,
+            pretrained=ckpt_path is None,
+            img_size=img_size[0],
             num_classes=0,
-            embed_dim=sizes["embed_dim"],
-            depths=sizes["depths"],
-            focal_levels=sizes["focal_levels"],
-            focal_windows=sizes["focal_windows"],
-            use_conv_embed=use_conv_embed,
-            use_layerscale=use_layerscale,
-            use_postln=use_postln,
-            use_postln_in_modulation=use_postln_in_modulation,
-            normalize_modulator=normalize_modulator,
         )
+        self.backbone.set_image_res(img_size[0])
 
         if ckpt_path is not None:
             self.backbone = load_focalnet_ckpt(self.backbone, ckpt_path)
 
-        self.backbone.set_image_res(img_size[0])
-
+        sizes = focalnet_sizes[focalnet_size]
         self.depths = sizes["depths"]
-        self.num_heads = [sizes["embed_dim"] * (2 ** i) // 32 for i in range(len(self.depths))]
+        self.num_heads = sizes["num_heads"]
         self.attn_multiplier = multiplier
 
-        # embed_dim of the final stage (used by EoMT for query dimensionality)
+        # embed_dim of the final stage — used by EoMT for query dimensionality
         self.embed_dim = self.backbone.num_features
-        self.patch_size = self.backbone.patch_embed.patch_size          # (ph, pw)
+        self.patch_size = self.backbone.patch_embed.patch_size
         self.num_prefix_tokens = 0
 
-        # grid size at the final stage (after all downsampling)
+        # grid size after all downsampling (final stage spatial resolution)
         num_stages = len(self.depths)
         patches_res = self.backbone.patches_resolution
         self.grid_size = (
@@ -72,21 +63,17 @@ class FocalNetModel(nn.Module):
             patches_res[1] // (2 ** (num_stages - 1)),
         )
 
-        # ----------------------------------------------------------------
-        # Flatten all FocalNetBlocks into a single list (mirrors Swin/Hydra)
-        # Each BasicLayer holds its own nn.ModuleList of FocalNetBlocks.
-        # ----------------------------------------------------------------
+        # Flatten all FocalNetBlocks across all BasicLayers into one list
         self.blocks = [block for layer in self.backbone.layers for block in layer.blocks]
 
-        # cumulative block-end index per stage (1-based), for downsample tracking
+        # cumulative block-end index per stage (1-based)
         depth_prefix_sum_list = []
         s = 0
         for d in self.depths:
             s += d
             depth_prefix_sum_list.append(s)
 
-        # Collect the PatchEmbed downsamplers that sit at the end of each stage
-        # (BasicLayer.downsample is a PatchEmbed instance, None for the last stage)
+        # PatchEmbed downsamplers at end of each stage (None for last stage)
         self.patch_embed_dict = nn.ModuleDict(
             {
                 str(end): layer.downsample
@@ -110,7 +97,6 @@ class FocalNetModel(nn.Module):
         """Patch-embed input image into flat token sequence (B, H*W, C)."""
         x, H, W = self.backbone.patch_embed(x)
         x = self.backbone.pos_drop(x)
-        # Store spatial dims so run_block can pass them to each FocalNetBlock
         self._H, self._W = H, W
         return x
 
@@ -118,11 +104,11 @@ class FocalNetModel(nn.Module):
         """
         EoMT-aware FocalNet block runner.
 
-        FocalNetBlock.forward() expects (B, H*W, C) and uses block.H / block.W
-        to reshape internally. We set those before calling the block.
+        FocalNetBlock.forward() expects (B, H*W, C) and reads block.H / block.W
+        internally to reshape. We set those before every call.
 
         x  : (B, L, C)  — flat spatial tokens
-        q  : (num_q, C) — unbatched query tokens, consistent with EoMT.forward()
+        q  : (num_q, C) — unbatched query tokens
         i  : global block index (0-based across all stages)
         """
         H, W = self._H, self._W
@@ -136,7 +122,6 @@ class FocalNetModel(nn.Module):
         if i >= len(self.blocks) - eomt_obj.num_blocks:
             eomt_idx = i - (len(self.blocks) - eomt_obj.num_blocks)
 
-            # Expand q to batch dim
             if q.dim() == 2:
                 q_batched = q[None].expand(B, -1, -1)
             else:
@@ -145,7 +130,7 @@ class FocalNetModel(nn.Module):
             # 1) Concatenate query + image tokens: (B, num_q+L, C)
             xq = torch.cat([q_batched, x], dim=1)
 
-            # 2) Pre-attention norm (FocalNetBlock uses norm1 before modulation)
+            # 2) Pre-attention norm via block.norm1
             pre_attn = block.norm1(xq)
             q_tok = pre_attn[:, : eomt_obj.num_q, :]   # (B, num_q, C)
             x_tok = pre_attn[:, eomt_obj.num_q :, :]   # (B, L, C)
@@ -156,19 +141,18 @@ class FocalNetModel(nn.Module):
             eomt_obj.class_logits_per_layer.append(class_logits)
 
             # 4) EoMT cross-attention
-            after_eomt = torch.cat([q_tok, x_tok], dim=1)  # (B, num_q+L, C)
+            after_eomt = torch.cat([q_tok, x_tok], dim=1)
             new_x = eomt_obj.attn[eomt_idx](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[eomt_idx](new_x))
 
             # 5) Split back
-            q_batched = xq[:, : eomt_obj.num_q, :]   # (B, num_q, C)
-            x = xq[:, eomt_obj.num_q :, :]            # (B, L, C)
+            q_batched = xq[:, : eomt_obj.num_q, :]
+            x = xq[:, eomt_obj.num_q :, :]
 
             # 6) Standard FocalNet modulation block on image tokens
             x = block(x)
 
-            # 7) Mirror FFN sub-layer for query tokens (no self-modulation)
-            #    FocalNetBlock: shortcut + drop_path(gamma_2 * mlp(norm2(q)))
+            # 7) Mirror FFN sub-layer for query tokens (no focal modulation)
             q_batched = q_batched + block.drop_path(
                 block.gamma_2 * (
                     block.norm2(block.mlp(q_batched))
@@ -177,14 +161,12 @@ class FocalNetModel(nn.Module):
                 )
             )
 
-            # Collapse batch dim back to (num_q, C)
             q = q_batched
 
         else:
-            # Plain FocalNet block
             x = block(x)
 
-        # Downsample at stage boundary: PatchEmbed expects (B, C, H, W)
+        # Downsample at stage boundary via PatchEmbed
         ds_idx = str(i + 1)
         if ds_idx in self.patch_embed_dict:
             x_2d = x.transpose(1, 2).reshape(B, C, H, W)
@@ -194,13 +176,13 @@ class FocalNetModel(nn.Module):
         return x, q
 
     def post_blocks(self, x: torch.Tensor, q, eomt_obj):
-        """Apply final backbone norm after all blocks."""
+        """Apply final backbone LayerNorm after all blocks."""
         x = self.norm(x)
         return x, q
 
 
 def load_focalnet_ckpt(model: FocalNet, ckpt_path: str) -> FocalNet:
-    """Load a FocalNet checkpoint, tolerating key mismatches gracefully."""
+    """Load a FocalNet checkpoint, tolerating common key/shape mismatches."""
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     if "model" in checkpoint:
@@ -215,13 +197,13 @@ def load_focalnet_ckpt(model: FocalNet, ckpt_path: str) -> FocalNet:
     else:
         state_dict = checkpoint
 
-    # Strip "backbone." prefix if present (e.g. from segmentation checkpoints)
+    # Strip backbone. prefix (e.g. from segmentation checkpoints)
     state_dict = {
         k[9:] if k.startswith("backbone.") else k: v
         for k, v in state_dict.items()
     }
 
-    # Remove classification head weights — not used for segmentation
+    # Drop classification head — not used for segmentation
     state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
 
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
