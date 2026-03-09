@@ -53,7 +53,6 @@ class SwitchMlp(nn.Module):
         self.loss_steps = 0
 
     def update_loss(self, route_counts, route_probs):
-        print(f"route_counts: {route_counts}, route_probs: {route_probs}")
         N = route_counts.shape[0]
         T = route_counts.sum().item()
         self.internal_loss += N / T * route_counts @ route_probs

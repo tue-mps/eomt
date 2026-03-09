@@ -1,0 +1,31 @@
+trainer:
+  max_epochs: 31
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "ade20k_semantic_512_ViT-B_21k"
+model:
+  class_path: training.mask_classification_semantic.MaskClassificationSemantic
+  init_args:
+    attn_mask_annealing_enabled: False
+    attn_mask_annealing_start_steps: [6520, 13040, 19560, 26080]
+    attn_mask_annealing_end_steps: [13040, 19560, 26080, 32600]
+    lr: 1e-4
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 100
+        num_blocks: 2
+        self_a: False
+        encoder:
+          class_path: models.efficientmod.EfficientMod
+          init_args:
+            backbone_name: "efficient_mod_s"
+            ls_init: 1e-6
+            ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/EfficientMod-S_IN21k.pt"
+data:
+  class_path: datasets.ade20k_semantic.ADE20KSemantic
+  init_args:
+    img_size: [512, 512]

@@ -79,7 +79,6 @@ class Switch(nn.Module):
         EoMT-aware block execution, structurally aligned with ViT/Hydra/Linformer.
         Assumes timm ViT blocks expose: norm1, attn, ls1, drop_path1, norm2, mlp, ls2, drop_path2.
         """
-        print(f"running block {self.training} {i}")
         if i >= len(self.blocks) - eomt_obj.num_blocks:
             # ---- EoMT interaction branch ----
             xq = torch.cat((q[None, :, :].expand(x.shape[0], -1, -1), x), dim=1)

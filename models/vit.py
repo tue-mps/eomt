@@ -27,7 +27,7 @@ class ViT(nn.Module):
         super().__init__()
         self.backbone = timm.create_model(
             backbone_name,
-            pretrained=ckpt_path is None,
+            pretrained=False,
             img_size=img_size,
             patch_size=patch_size,
             no_embed_class = True,

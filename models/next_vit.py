@@ -57,7 +57,19 @@ class NextViT(nn.Module):
             self.num_heads.append(block.mhca.groups)
 
         self.embed_dim = 768
-        
+        self.token_norm = nn.LayerNorm(self.embed_dim)
+        self._fallback_projs = nn.ModuleDict()
+        proj_key = f"proj_{768}_{1024}"
+        new_proj = nn.Linear(768, 1024)
+        nn.init.kaiming_normal_(new_proj.weight)
+        nn.init.constant_(new_proj.bias, 0)
+        self._fallback_projs[proj_key] = new_proj
+        self.projection = nn.Linear(1024, self.embed_dim)
+        nn.init.kaiming_normal_(self.projection.weight)
+        nn.init.constant_(self.projection.bias, 0)
+        self.projection = nn.Linear(1024, self.embed_dim)
+        nn.init.kaiming_normal_(self.projection.weight)
+        nn.init.constant_(self.projection.bias, 0)
         self.norm = self.backbone.norm
         #nn.LayerNorm(self.embed_dim)
         # State trackers
@@ -200,6 +212,8 @@ class NextViT(nn.Module):
 
 
 def load_swin_ckpt_ignore_attn_mask(model, ckpt_path):
+    if ckpt_path is None:
+        return model
     # 1) Load checkpoint state dict
     checkpoint = torch.load(ckpt_path, map_location="cpu",weights_only=False)
     if 'model_state' in checkpoint:
