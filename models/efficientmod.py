@@ -174,9 +174,6 @@ class EfficientModModel(nn.Module):
             else:
                 q_batched = q
 
-            # Reshape x to BHWC for norm access
-            x_bhwc = x.reshape(B, H, W, C)
-
             # 1) Concatenate query + image tokens: (B, num_q + L, C)
             xq = torch.cat([q_batched, x], dim=1)
 
@@ -200,7 +197,7 @@ class EfficientModModel(nn.Module):
             x = xq[:, eomt_obj.num_q :, :]
 
             # 6) Run standard EfficientMod block on image tokens (BHWC)
-            x_bhwc = x.reshape(B, H, W, C)
+            x_bhwc = x.reshape(B, H, W, x.shape[-1])
             x_bhwc = block(x_bhwc)
             x = x_bhwc.reshape(B, H * W, -1).contiguous()
 
