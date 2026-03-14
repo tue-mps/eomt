@@ -72,13 +72,15 @@ class EfficientModModel(nn.Module):
             self.backbone = load_efficientmod_ckpt(self.backbone, ckpt_path)
 
         sizes = efficientmod_sizes[efficientmod_size]
-        self.depths = [d + a for d, a in zip(sizes["depths"], sizes["attention_depth"])]
         self._stage_depths = sizes["depths"]
         self._attention_depths = sizes["attention_depth"]
+        # depths = actual backbone block counts per stage (used by eomt.py for
+        # get_layer_scale_list / get_attention_list sizing -- must match len(self.blocks))
+        self.depths = self._stage_depths
         self.num_heads = sizes["num_heads"]
         self.attn_multiplier = multiplier
 
-        # embed_dim at the final stage — used by EoMT for query dimensionality
+        # embed_dim at the final stage -- used by EoMT for query dimensionality
         self.embed_dim = sizes["embed_dim"][-1]
         self.num_prefix_tokens = 0
 
@@ -109,9 +111,30 @@ class EfficientModModel(nn.Module):
             h, w = h // 2, w // 2
             self._stage_hw.append((h, w))
 
-        # Build a block-index -> (H, W) lookup table
+        # Cumulative block counts at the end of each stage (1-based),
+        # used to key the patch_merging_dict -- mirrors Swin's approach.
+        depth_prefix_sum_list = []
+        s = 0
+        for d in self._stage_depths:
+            s += d
+            depth_prefix_sum_list.append(s)
+
+        # Inter-stage downsamplers keyed by 1-based cumulative block index.
+        # Only stages with an actual downsample module are registered.
+        # EfficientMod's PatchMerging operates on BHWC tensors -- reshape
+        # is handled in run_block before/after calling the downsampler.
+        self.patch_merging_dict = nn.ModuleDict(
+            {
+                str(end): layer.downsample
+                for end, layer in zip(depth_prefix_sum_list, self.backbone.layers)
+                if layer.downsample is not None
+            }
+        )
+
+        # Build a block-index -> (H, W) lookup table using actual stage depths
+        # (not inflated depths + attention_depth).
         self._block_hw_map: list[tuple[int, int]] = []
-        for stage_idx, stage_total in enumerate(self.depths):
+        for stage_idx, stage_total in enumerate(self._stage_depths):
             for _ in range(stage_total):
                 self._block_hw_map.append(self._stage_hw[stage_idx])
 
@@ -152,8 +175,8 @@ class EfficientModModel(nn.Module):
         """
         EoMT-aware EfficientMod block runner.
 
-        x : (B, L, C)  — flat spatial tokens (BLC layout)
-        q : (num_q, C) or (B, num_q, C) — query tokens
+        x : (B, L, C)  -- flat spatial tokens (BLC layout)
+        q : (num_q, C) or (B, num_q, C) -- query tokens
         i : global block index (0-based across all stages)
 
         EfficientMod BasicBlocks and AttentionBlocks both expect BHWC.
@@ -177,7 +200,7 @@ class EfficientModModel(nn.Module):
             # 1) Concatenate query + image tokens: (B, num_q + L, C)
             xq = torch.cat([q_batched, x], dim=1)
 
-            # 2) Pre-attention norm — EfficientMod blocks use block.norm (LayerNorm)
+            # 2) Pre-attention norm -- EfficientMod blocks use block.norm (LayerNorm)
             pre_attn = block.norm(xq)
             q_tok = pre_attn[:, : eomt_obj.num_q, :]   # (B, num_q, C)
             x_tok = pre_attn[:, eomt_obj.num_q :, :]   # (B, L, C)
@@ -224,13 +247,20 @@ class EfficientModModel(nn.Module):
             x_bhwc = block(x_bhwc)
             x = x_bhwc.reshape(B, H * W, x_bhwc.shape[-1]).contiguous()
 
-        # Update tracked spatial dims (C may grow after an AttentionBlock
-        # that sits right before an inter-stage downsample; H/W stay the same
-        # within a stage — the PatchEmbed downsamplers live inside BasicLayer
-        # and are called by the layer's own forward(), not block-by-block).
-        # We update self._H/_W to the current block's output spatial dims
-        # so post_blocks / _predict reshape correctly.
+        # Update tracked spatial dims for post_blocks / _predict reshape
         self._H, self._W = H, W
+
+        # Inter-stage downsampling -- mirrors Swin's patch_merging_dict pattern.
+        # Key is the 1-based cumulative block count at the end of each stage.
+        # EfficientMod's PatchMerging expects BHWC, so reshape before/after.
+        ds_idx = str(i + 1)
+        if ds_idx in self.patch_merging_dict:
+            B2, L2, C2 = x.shape
+            x_bhwc = x.reshape(B2, H, W, C2)
+            x_bhwc = self.patch_merging_dict[ds_idx](x_bhwc)
+            nB, nH, nW, nC = x_bhwc.shape
+            x = x_bhwc.reshape(nB, nH * nW, nC).contiguous()
+            self._H, self._W = nH, nW
 
         return x, q
 
@@ -266,10 +296,10 @@ def load_efficientmod_ckpt(model: EfficientMod, ckpt_path: str) -> EfficientMod:
         for k, v in state_dict.items()
     }
 
-    # Drop classification head — not used for segmentation
+    # Drop classification head -- not used for segmentation
     state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
 
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    print("EfficientMod — Missing keys :", missing)
-    print("EfficientMod — Unexpected keys:", unexpected)
+    print("EfficientMod -- Missing keys :", missing)
+    print("EfficientMod -- Unexpected keys:", unexpected)
     return model
