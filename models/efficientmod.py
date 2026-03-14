@@ -53,16 +53,16 @@ class EfficientModModel(nn.Module):
         backbone_name: str = "efficient_mod_s",
         efficientmod_size: str = "S",
         multiplier: int = 1,
+        ls_init: Optional[float] = None,
         ckpt_path: Optional[str] = None,
     ):
         super().__init__()
 
-        self.backbone: EfficientMod = timm.create_model(
+        self.backbone = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
             num_classes=0,
-            layer_scale=False,
-            layer_scale_init_values=1e-4,
+            ls_init=ls_init,
             qkv_bias=True,
             drop_path_rate=0.1,
         )
