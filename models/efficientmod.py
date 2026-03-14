@@ -8,7 +8,7 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 # Import the backbone module so its @register_model decorators run,
 # registering efficient_mod_* names into timm's model registry.
 import models.backbones.efficientmod  # noqa: F401
-from models.backbones.efficientmod import EfficientMod
+from models.backbones.efficientmod import EfficientMod, AttentionBlock
 
 
 # Structural metadata per variant.
@@ -53,16 +53,16 @@ class EfficientModModel(nn.Module):
         backbone_name: str = "efficient_mod_s",
         efficientmod_size: str = "S",
         multiplier: int = 1,
-        ls_init: Optional[float] = None,
         ckpt_path: Optional[str] = None,
     ):
         super().__init__()
 
-        self.backbone = timm.create_model(
+        self.backbone: EfficientMod = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
             num_classes=0,
-            ls_init=ls_init,
+            layer_scale=False,
+            layer_scale_init_values=1e-4,
             qkv_bias=True,
             drop_path_rate=0.1,
         )
@@ -177,11 +177,17 @@ class EfficientModModel(nn.Module):
         q : (num_q, C) or (B, num_q, C) -- query tokens
         i : global block index (0-based across all stages)
 
-        EfficientMod BasicBlocks and AttentionBlocks both expect BHWC.
+        BasicBlock uses .norm / .mlp / .drop_path / .gamma_1
+        AttentionBlock (timm Block) uses .norm1 / .norm2 / .mlp /
+            .drop_path1 / .drop_path2 / .ls1 / .ls2
         """
         H, W = self._block_hw_map[i]
         B, L, C = x.shape
         assert L == H * W, f"Token count {L} != {H}x{W}={H * W}"
+
+        is_attn_block = isinstance(block, AttentionBlock)
+        # Choose the correct pre-attention norm for each block type
+        pre_attn_norm = block.norm1 if is_attn_block else block.norm
 
         total_blocks = len(self.blocks)
 
@@ -196,8 +202,8 @@ class EfficientModModel(nn.Module):
             # 1) Concatenate query + image tokens: (B, num_q + L, C)
             xq = torch.cat([q_batched, x], dim=1)
 
-            # 2) Pre-attention norm
-            pre_attn = block.norm(xq)
+            # 2) Pre-attention norm (norm1 for AttentionBlock, norm for BasicBlock)
+            pre_attn = pre_attn_norm(xq)
             q_tok = pre_attn[:, : eomt_obj.num_q, :]
             x_tok = pre_attn[:, eomt_obj.num_q :, :]
 
@@ -221,17 +227,16 @@ class EfficientModModel(nn.Module):
             x = x_bhwc.reshape(B, H * W, -1).contiguous()
 
             # 7) Mirror MLP sub-layer for query tokens
-            if hasattr(block, "mlp"):
-                if hasattr(block, "drop_path2"):
-                    # AttentionBlock-style
-                    q_batched = q_batched + block.drop_path2(
-                        block.ls2(block.mlp(block.norm2(q_batched)))
-                    )
-                else:
-                    # BasicBlock-style
-                    q_batched = q_batched + block.drop_path(
-                        block.gamma_1 * block.mlp(block.norm(q_batched))
-                    )
+            if is_attn_block:
+                # AttentionBlock: shortcut + drop_path2(ls2(mlp(norm2(q))))
+                q_batched = q_batched + block.drop_path2(
+                    block.ls2(block.mlp(block.norm2(q_batched)))
+                )
+            else:
+                # BasicBlock: shortcut + drop_path(gamma_1 * mlp(norm(q)))
+                q_batched = q_batched + block.drop_path(
+                    block.gamma_1 * block.mlp(block.norm(q_batched))
+                )
 
             q = q_batched
 
