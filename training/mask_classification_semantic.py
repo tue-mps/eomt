@@ -3,7 +3,6 @@
 # Licensed under the MIT License.
 # ---------------------------------------------------------------
 
-
 from typing import List, Optional
 import torch.nn as nn
 import torch.nn.functional as F
@@ -56,7 +55,9 @@ class MaskClassificationSemantic(LightningModule):
         )
 
         self.save_hyperparameters(ignore=["_class_path"])
-
+        for name, param in self.network.named_parameters():
+            if 'language_expert' in name or 'vlffn' in name:
+                param.requires_grad = False
         self.ignore_idx = ignore_idx
         self.mask_thresh = mask_thresh
         self.overlap_thresh = overlap_thresh
@@ -98,10 +99,12 @@ class MaskClassificationSemantic(LightningModule):
 
             self.update_metrics_semantic(logits, targets, i)
 
-            if batch_idx == 0:
+            should_plot = batch_idx == 0 and (self.current_epoch == 0 or (self.current_epoch + 1) % 10 == 0)
+            if should_plot:
                 self.plot_semantic(
                     imgs[0], targets[0], logits[0], log_prefix, i, batch_idx
                 )
+
 
     def on_validation_epoch_end(self):
         self._on_eval_epoch_end_semantic("val")

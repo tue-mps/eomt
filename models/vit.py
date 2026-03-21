@@ -22,19 +22,21 @@ class ViT(nn.Module):
         multiplier: int = 1,
         ls_init = 1e-6,
         vit_size: str = "B",
+        pretrained: bool = False,
+        emb_class: bool = False,
         ckpt_path: Optional[str] = None,
     ):
         super().__init__()
         self.backbone = timm.create_model(
             backbone_name,
-            pretrained=False,
+            pretrained=pretrained,
             img_size=img_size,
             patch_size=patch_size,
-            no_embed_class = True,
+            no_embed_class = emb_class,
             init_values=ls_init,
             num_classes=0
         )
-        if ckpt_path is not None and os.path.isfile(ckpt_path):
+        if ckpt_path is not None and os.path.isfile(ckpt_path) and not pretrained:
             print("checkpoint found at {}".format(ckpt_path))
             checkpoint = torch.load(ckpt_path,weights_only=False)
             
@@ -76,8 +78,27 @@ class ViT(nn.Module):
     def pre_block(self, x: torch.Tensor):
         x = self.backbone.patch_embed(x)
         x = self.backbone._pos_embed(x)
-        x = self.backbone.patch_drop(x)
+        if self.backbone.patch_drop is not None:
+            x = self.backbone.patch_drop(x)
         x = self.backbone.norm_pre(x)
+        self.backbone._rope_cache = None
+        if hasattr(self.backbone, 'rope'):
+            self.backbone._rope_cache = self.backbone.rope(x)
+
+        return x
+    
+    def _ls1(self, block, x):
+        if hasattr(block, 'ls1') and block.ls1 is not None:
+            return block.ls1(x)
+        if hasattr(block, 'gamma_1') and block.gamma_1 is not None:
+            return block.gamma_1 * x
+        return x
+
+    def _ls2(self, block, x):
+        if hasattr(block, 'ls2') and block.ls2 is not None:
+            return block.ls2(x)
+        if hasattr(block, 'gamma_2') and block.gamma_2 is not None:
+            return block.gamma_2 * x
         return x
     
     def run_block(self, block, eomt_obj, x: torch.Tensor, q, i):   
@@ -94,16 +115,20 @@ class ViT(nn.Module):
             eomt_obj.class_logits_per_layer.append(class_logits)
 
             after_eomt = torch.cat((q, x), dim=1)
-            #cross-attention with EoMT attention module
             new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
-            x, q = xq[:, eomt_obj.num_q :, :], xq[:, : eomt_obj.num_q, :]
-            x = x + block.drop_path1(block.ls1(block.attn(block.norm1(x))))
-            x = x + block.drop_path2(block.ls2(block.mlp(block.norm2(x))))
-            q = q + block.drop_path2(block.ls2(block.mlp(block.norm2(q))))
-            
+            x, q = xq[:, eomt_obj.num_q:, :], xq[:, :eomt_obj.num_q, :]
+            x = x + block.drop_path1(self._ls1(block, block.attn(block.norm1(x))))
+            x = x + block.drop_path2(self._ls2(block, block.mlp(block.norm2(x))))
+            q = q + block.drop_path2(self._ls2(block, block.mlp(block.norm2(q))))
+
         else:
-            x = block(x)
+            rope = getattr(self.backbone, '_rope_cache', None)
+            if rope is not None:
+                out = block(x, rope=rope)
+            else:
+                out = block(x)
+            x = out[0] if isinstance(out, (tuple, list)) else out
 
         return x, q
     

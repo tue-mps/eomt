@@ -23,7 +23,6 @@ model:
           class_path: models.focalnet.FocalNet
           init_args:
             backbone_name: "focalnet_small_srf"
-            ls_init: 1e-6
             ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/FocalNet-S_IN21k.pt"
 data:
   class_path: datasets.ade20k_semantic.ADE20KSemantic

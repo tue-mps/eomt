@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from timm.models.vision_transformer import Block, DropPath
 from timm.models import register_model
-from utils import to_2tuple
+from timm.models.layers import to_2tuple
 
 
 class PatchEmbed(nn.Module):
@@ -467,6 +467,10 @@ def efficient_mod_xxs(pretrained=False, num_classes=1000, **kwargs):
     if heads is None:
         heads = 8
 
+    if kwargs["ls_init"] is not None:
+        kwargs["layer_scale_init_values"] = kwargs["ls_init"]
+        kwargs["layer_scale"] = True
+        
     drop_rate = kwargs["proj_drop"] if "proj_drop" in kwargs else (kwargs["dropout"] if "dropout" in kwargs else 0.0)
 
     model = EfficientMod(
@@ -521,7 +525,10 @@ def efficient_mod_xs(pretrained=False, num_classes=1000, **kwargs):
     heads = kwargs.get("num_heads", None)
     if heads is None:
         heads = 8
-
+    
+    if kwargs["ls_init"] is not None:
+        kwargs["layer_scale_init_values"] = kwargs["ls_init"]
+        kwargs["layer_scale"] = True
     drop_rate = kwargs["proj_drop"] if "proj_drop" in kwargs else (kwargs["dropout"] if "dropout" in kwargs else 0.0)
 
     model = EfficientMod(
@@ -578,7 +585,11 @@ def efficient_mod_s(pretrained=False, num_classes=1000, **kwargs):
         heads = 8
 
     drop_rate = kwargs["proj_drop"] if "proj_drop" in kwargs else (kwargs["dropout"] if "dropout" in kwargs else 0.0)
-
+    
+    if kwargs["ls_init"] is not None:
+        kwargs["layer_scale_init_values"] = kwargs["ls_init"]
+        kwargs["layer_scale"] = True
+    
     model = EfficientMod(
         in_chans=3,
         num_classes=num_classes,

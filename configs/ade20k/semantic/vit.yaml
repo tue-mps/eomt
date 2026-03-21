@@ -27,6 +27,8 @@ model:
             ls_init: 1e-6
             ckpt_path: "/netscratch/nauen/trained_models/imagenet21k/ViT-B.pt"
             vit_size: "B"
+            pretrained: True
+            emb_class: False
 data:
   class_path: datasets.ade20k_semantic.ADE20KSemantic
   init_args:

@@ -8,7 +8,6 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 # Import the backbone module so its @register_model decorators run,
 # registering focalnet_* names into timm's model registry.
 import models.backbones.focalnet  # noqa: F401
-from models.backbones.focalnet import FocalNet
 
 
 # Structural metadata for the small SRF variant.
@@ -23,7 +22,7 @@ focalnet_sizes = {
 }
 
 
-class FocalNetModel(nn.Module):
+class FocalNet(nn.Module):
     def __init__(
         self,
         img_size: tuple[int, int],
@@ -34,7 +33,7 @@ class FocalNetModel(nn.Module):
     ):
         super().__init__()
 
-        self.backbone: FocalNet = timm.create_model(
+        self.backbone = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
             img_size=img_size[0],

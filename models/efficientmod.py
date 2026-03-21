@@ -8,9 +8,8 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 # Import the backbone module so its @register_model decorators run,
 # registering efficient_mod_* names into timm's model registry.
 import models.backbones.efficientmod  # noqa: F401
-from models.backbones.efficientmod import EfficientMod, AttentionBlock
 
-
+from models.backbones.efficientmod import AttentionBlock
 # Structural metadata per variant.
 # depths / embed_dim / num_heads must match the backbone's @register_model configs.
 efficientmod_sizes = {
@@ -38,7 +37,7 @@ efficientmod_sizes = {
 }
 
 
-class EfficientModModel(nn.Module):
+class EfficientMod(nn.Module):
     """
     EoMT-compatible wrapper for the EfficientMod backbone.
 
@@ -53,16 +52,16 @@ class EfficientModModel(nn.Module):
         backbone_name: str = "efficient_mod_s",
         efficientmod_size: str = "S",
         multiplier: int = 1,
+        ls_init: Optional[float] = 1e-6,
         ckpt_path: Optional[str] = None,
     ):
         super().__init__()
 
-        self.backbone: EfficientMod = timm.create_model(
+        self.backbone = timm.create_model(
             backbone_name,
             pretrained=ckpt_path is None,
             num_classes=0,
-            layer_scale=False,
-            layer_scale_init_values=1e-4,
+            ls_init=ls_init,
             qkv_bias=True,
             drop_path_rate=0.1,
         )
@@ -147,6 +146,8 @@ class EfficientModModel(nn.Module):
         self.register_buffer("pixel_mean", pixel_mean)
         self.register_buffer("pixel_std", pixel_std)
 
+        
+
     # ------------------------------------------------------------------
     # EoMT interface
     # ------------------------------------------------------------------
@@ -177,9 +178,7 @@ class EfficientModModel(nn.Module):
         q : (num_q, C) or (B, num_q, C) -- query tokens
         i : global block index (0-based across all stages)
 
-        BasicBlock uses .norm / .mlp / .drop_path / .gamma_1
-        AttentionBlock (timm Block) uses .norm1 / .norm2 / .mlp /
-            .drop_path1 / .drop_path2 / .ls1 / .ls2
+        EfficientMod BasicBlocks and AttentionBlocks both expect BHWC.
         """
         H, W = self._block_hw_map[i]
         B, L, C = x.shape
@@ -188,7 +187,6 @@ class EfficientModModel(nn.Module):
         is_attn_block = isinstance(block, AttentionBlock)
         # Choose the correct pre-attention norm for each block type
         pre_attn_norm = block.norm1 if is_attn_block else block.norm
-
         total_blocks = len(self.blocks)
 
         if i >= total_blocks - eomt_obj.num_blocks:
@@ -202,7 +200,7 @@ class EfficientModModel(nn.Module):
             # 1) Concatenate query + image tokens: (B, num_q + L, C)
             xq = torch.cat([q_batched, x], dim=1)
 
-            # 2) Pre-attention norm (norm1 for AttentionBlock, norm for BasicBlock)
+            # 2) Pre-attention norm
             pre_attn = pre_attn_norm(xq)
             q_tok = pre_attn[:, : eomt_obj.num_q, :]
             x_tok = pre_attn[:, eomt_obj.num_q :, :]
