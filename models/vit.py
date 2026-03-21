@@ -82,10 +82,11 @@ class ViT(nn.Module):
             x = self.backbone.patch_drop(x)
         x = self.backbone.norm_pre(x)
         self.backbone._rope_cache = None
-        if hasattr(self.backbone, 'rope'):
-            self.backbone._rope_cache = self.backbone.rope(x)
+        if hasattr(self.backbone, 'rope') and self.backbone.rope is not None:
+            self.backbone._rope_cache = self.backbone.rope.get_embed(shape=self.grid_size)
 
         return x
+
     
     def _ls1(self, block, x):
         if hasattr(block, 'ls1') and block.ls1 is not None:
@@ -118,7 +119,7 @@ class ViT(nn.Module):
             new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
             x, q = xq[:, eomt_obj.num_q:, :], xq[:, :eomt_obj.num_q, :]
-            x = x + block.drop_path1(self._ls1(block, block.attn(block.norm1(x))))
+            x = x + block.drop_path1(self._ls1(block, block.attn(block.norm1(x), rope=self.backbone._rope_cache)[0]))
             x = x + block.drop_path2(self._ls2(block, block.mlp(block.norm2(x))))
             q = q + block.drop_path2(self._ls2(block, block.mlp(block.norm2(q))))
 
