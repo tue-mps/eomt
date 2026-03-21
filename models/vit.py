@@ -20,7 +20,7 @@ class ViT(nn.Module):
         patch_size=16,
         backbone_name="vit_large_patch16_384",
         multiplier: int = 1,
-        ls_init = 1e-6,
+        ls_init: Optional[float] = 1e-6,
         vit_size: str = "B",
         pretrained: bool = False,
         emb_class: bool = False,
