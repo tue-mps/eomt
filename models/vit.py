@@ -87,7 +87,11 @@ class ViT(nn.Module):
 
         return x
 
-    
+    def _attn(self, block, x):
+        rope = self.backbone._rope_cache
+        out = block.attn(block.norm1(x), **({'rope': rope} if rope is not None else {}))
+        return out[0] if isinstance(out, (tuple, list)) else out
+
     def _ls1(self, block, x):
         if hasattr(block, 'ls1') and block.ls1 is not None:
             return block.ls1(x)
@@ -119,16 +123,15 @@ class ViT(nn.Module):
             new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
             x, q = xq[:, eomt_obj.num_q:, :], xq[:, :eomt_obj.num_q, :]
-            x = x + block.drop_path1(self._ls1(block, block.attn(block.norm1(x), rope=self.backbone._rope_cache)[0]))
+            x = x + block.drop_path1(self._ls1(block, block._attn(block.norm1(x), rope=self.backbone._rope_cache)[0]))
             x = x + block.drop_path2(self._ls2(block, block.mlp(block.norm2(x))))
             q = q + block.drop_path2(self._ls2(block, block.mlp(block.norm2(q))))
 
         else:
+            if isinstance(x, (tuple, list)):
+                x = x[0]
             rope = getattr(self.backbone, '_rope_cache', None)
-            if rope is not None:
-                out = block(x, rope=rope)
-            else:
-                out = block(x)
+            out = block(x, rope=rope) if rope is not None else block(x)
             x = out[0] if isinstance(out, (tuple, list)) else out
 
         return x, q
