@@ -123,7 +123,7 @@ class ViT(nn.Module):
             new_x = eomt_obj.attn[i - len(self.blocks)](self.norm(after_eomt))
             xq = xq + eomt_obj.dp(eomt_obj.ls_list[i - len(self.blocks)](new_x))
             x, q = xq[:, eomt_obj.num_q:, :], xq[:, :eomt_obj.num_q, :]
-            x = x + block.drop_path1(self._ls1(block, block._attn(block.norm1(x), rope=self.backbone._rope_cache)[0]))
+            x = x + block.drop_path1(self._ls1(block, self._attn(block, x)))
             x = x + block.drop_path2(self._ls2(block, block.mlp(block.norm2(x))))
             q = q + block.drop_path2(self._ls2(block, block.mlp(block.norm2(q))))
 
