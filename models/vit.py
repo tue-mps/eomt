@@ -130,9 +130,8 @@ class ViT(nn.Module):
         else:
             if isinstance(x, (tuple, list)):
                 x = x[0]
-            rope = getattr(self.backbone, '_rope_cache', None)
-            out = block(x, rope=rope) if rope is not None else block(x)
-            x = out[0] if isinstance(out, (tuple, list)) else out
+            x = x + block.drop_path1(self._ls1(block, self._attn(block, x)))
+            x = x + block.drop_path2(self._ls2(block, block.mlp(block.norm2(x))))
 
         return x, q
     
