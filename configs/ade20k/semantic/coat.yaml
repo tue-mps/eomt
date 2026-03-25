@@ -1,0 +1,35 @@
+trainer:
+  max_epochs: 31
+  logger:
+    class_path: lightning.pytorch.loggers.wandb.WandbLogger
+    init_args:
+      resume: allow
+      project: "eomt"
+      name: "ade20k_semantic_512_coat_lite_small"
+model:
+  class_path: training.mask_classification_semantic.MaskClassificationSemantic
+  init_args:
+    attn_mask_annealing_enabled: False
+    attn_mask_annealing_start_steps: [6520, 13040, 19560, 26080]
+    attn_mask_annealing_end_steps: [13040, 19560, 26080, 32600]
+    lr: 1e-4
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 100
+        num_blocks: 2
+        self_a: False
+        encoder:
+          class_path: models.coat.CoaTSeg
+          init_args:
+            backbone_name: "coat_lite_small"
+            ckpt_path: null
+data:
+  class_path: datasets.ade20k_semantic.ADE20KSemantic
+  init_args:
+    img_size: [512, 512]
+
+    # Example CLI overrides:
+    # --model.init_args.network.init_args.encoder.init_args.backbone_name coat_lite_medium
+    # --model.init_args.network.init_args.encoder.init_args.ckpt_path /path/to/coat_lite_small.pth
+    # --data.init_args.img_size "[224,224]"
