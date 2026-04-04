@@ -16,6 +16,14 @@ Leveraging large-scale pre-trained ViTs, EoMT achieves accuracy similar to state
 
 Turns out, *your ViT is secretly an image segmentation model*. EoMT shows that architectural complexity isn't necessary. For segmentation, a plain Transformer is all you need.
 
+## 🚀 NEW: PMT 
+
+Presenting our latest model, [PMT: Plain Mask Transformer for Image and Video Segmentation with Frozen Vision Encoders](https://arxiv.org/abs/2603.25398).
+
+PMT reconciles EoMT minimal philosophy with the need of preserving the features of frozen Foundation Models, by mimicking the last layers of EoMT and VidEoMT with a simple and fast decoder.
+
+Take a [look](https://github.com/tue-mps/pmt)!
+
 ## 🚀 NEW: VidEoMT 
 
 🔥 We're pleased to present our latest CVPR 2026 paper, [VidEoMT: Your ViT is Secretly Also a Video Segmentation Model](https://arxiv.org/abs/2602.17807).
