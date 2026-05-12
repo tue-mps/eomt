@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eomt"
+version = "0.0.1"
+description = "Your ViT is Secretly an Image Segmentation Model"
+requires-python = ">=3.12"
+dependencies = [
+    "timm>=1.0.15",
+    "lightning>=2.5,<3",
+    "transformers>=4.56",
+    "torch>=2.7,<3",
+    "torchvision>=0.22,<1",
+    "torchmetrics>=1.7,<2",
+    "scipy>=1.15",
+    "matplotlib>=3.10",
+    "fvcore>=0.1.5",
+    "pycocotools>=2.0",
+    "gitignore-parser>=0.1",
+    "jsonargparse[signatures]>=4.38",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["eomt"]

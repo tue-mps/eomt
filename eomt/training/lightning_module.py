@@ -34,7 +34,7 @@ from torch.nn.functional import interpolate
 from torchvision.transforms.v2.functional import pad
 import logging
 
-from training.two_stage_warmup_poly_schedule import TwoStageWarmupPolySchedule
+from eomt.training.two_stage_warmup_poly_schedule import TwoStageWarmupPolySchedule
 
 bold_green = "\033[1;32m"
 reset = "\033[0m"
