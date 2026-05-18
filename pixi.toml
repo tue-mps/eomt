@@ -1,0 +1,51 @@
+[workspace]
+channels = ["https://prefix.dev/conda-forge"]
+preview = ["pixi-build"]
+platforms = ["linux-64"]
+requires-pixi = ">=0.62"
+
+[system-requirements]
+linux = "5.4.0"
+
+[feature.cuda.system-requirements]
+cuda = "12"
+
+[package]
+name = "eomt"
+version = "0.0.1"
+description = "Your ViT is Secretly an Image Segmentation Model"
+authors = ["Smart Robotics <info@smart-robotics.nl>"]
+
+[package.build]
+backend = { name = "pixi-build-python", version = "0.4.*" }
+
+[package.host-dependencies]
+python_abi = { version = "3.12.*", build = "*_cp312" }
+hatchling = "*"
+
+[package.run-dependencies]
+timm = ">=1.0.15,<2"
+lightning = ">=2.5,<3"
+transformers = ">=4.56"
+pytorch = ">=2.7,<3"
+torchvision = ">=0.22,<1"
+torchmetrics = ">=1.7,<2"
+scipy = ">=1.15"
+matplotlib-base = ">=3.10"
+fvcore = ">=0.1.5"
+pycocotools = ">=2.0"
+gitignore-parser = ">=0.1"
+jsonargparse = ">=4.38"
+wandb = ">=0.19,<1"
+
+[dependencies]
+eomt = { path = "." }
+
+# Dev-environment-only extras: needed to run the inference notebook and
+# typed-config tooling. Kept out of [package.run-dependencies] so downstream
+# consumers of the conda package don't pull them in transitively.
+ipykernel = ">=6.29"
+typeshed-client = ">=2.8"
+
+[tasks]
+main = "python3 main.py"
