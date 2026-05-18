@@ -20,6 +20,7 @@ dependencies = [
     "pycocotools>=2.0",
     "gitignore-parser>=0.1",
     "jsonargparse[signatures]>=4.38",
+    "wandb>=0.19",
 ]
 
 [tool.hatch.build.targets.wheel]
