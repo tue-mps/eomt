@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-from models.scale_block import ScaleBlock
+from eomt.models.scale_block import ScaleBlock
 
 
 class EoMT(nn.Module):
