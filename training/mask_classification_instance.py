@@ -144,7 +144,7 @@ class MaskClassificationInstance(LightningModule):
                     )
                 )
 
-            self.update_metrics_instance(preds, targets, i)
+            self.update_metrics_instance(preds, targets_, i)
 
     def on_validation_epoch_end(self):
         self._on_eval_epoch_end_instance("val")
