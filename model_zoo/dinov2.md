@@ -236,4 +236,4 @@
 </tr>
 </tbody></table>
 
-*<sub>\* mAP reported using pycocotools; TorchMetrics (used by default) yields ~0.7 lower.</sub>*
+*<sub>\* mAP reported using pycocotools; TorchMetrics (used by default) yields ~0.4 lower.</sub>*
